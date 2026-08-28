@@ -6,6 +6,9 @@ namespace Clip.Tests;
 // WindowsClipboardHistory against a sandbox registry key (HKCU\Software\ClipTests\<guid>),
 // plus the real-hive wrappers of WindowsClipboardHistory and StartupRegistration with
 // snapshot/restore of the touched values so the machine ends up exactly as it started.
+// Serialized with StartupRegistrationCoverageTests: both swap the static InfoLog/ErrorLog
+// sinks, and parallel classes clobber each other's captures.
+[Collection("StartupStatics")]
 public sealed class RegistryAndStartupCoverageTests : IDisposable
 {
     private readonly string _sandboxPath = @"Software\ClipTests\" + Guid.NewGuid().ToString("N");

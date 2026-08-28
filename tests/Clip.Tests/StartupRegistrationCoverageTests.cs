@@ -7,6 +7,9 @@ namespace Clip.Tests;
 // unique GUID value name inside HKCU\...\Run and is removed in Dispose, so the user's real
 // "Clip" startup value is never touched. The no-arg SetEnabled/Migrate overloads (which target
 // the real "Clip" value) are exercised only through their read-only counterparts.
+// Serialized with RegistryAndStartupCoverageTests: both swap the static InfoLog/ErrorLog
+// sinks, and parallel classes clobber each other's captures.
+[Collection("StartupStatics")]
 public sealed class StartupRegistrationCoverageTests : IDisposable
 {
     private readonly string _valueName = "Clip.Tests." + Guid.NewGuid().ToString("N");
