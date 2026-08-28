@@ -83,4 +83,52 @@ public sealed class PaletteSelectionTests
     {
         Assert.Null(PaletteSelection.Step([], "a", 1));
     }
+
+    [Fact]
+    public void ReconcileWithNoSelectionLandsOnFirstVisible()
+    {
+        // The query-empties-then-refills case: the empty result set cleared the selection, so
+        // when results come back nothing is selected and Enter has no target. Reconcile with a
+        // null id must land on the first result, not leave the palette dead.
+        var refilled = new[] { Item("a"), Item("b") };
+
+        Assert.Equal("a", PaletteSelection.Reconcile(null, refilled)?.Id);
+        Assert.Null(PaletteSelection.Reconcile(null, []));
+    }
+
+    [Fact]
+    public void SingleItemListSurvivesEveryKindOfStep()
+    {
+        var only = new[] { Item("solo") };
+
+        // Every navigation key on a one-item list must land on that item — including page and
+        // whole-list jumps, which overshoot in both directions.
+        Assert.Equal("solo", PaletteSelection.Step(only, "solo", 1)?.Id);
+        Assert.Equal("solo", PaletteSelection.Step(only, "solo", -1)?.Id);
+        Assert.Equal("solo", PaletteSelection.Step(only, "solo", PaletteSelection.PageStep)?.Id);
+        Assert.Equal("solo", PaletteSelection.Step(only, "solo", -PaletteSelection.PageStep)?.Id);
+        Assert.Equal("solo", PaletteSelection.Step(only, null, 1)?.Id);
+        Assert.Equal("solo", PaletteSelection.Reconcile("solo", only)?.Id);
+    }
+
+    [Fact]
+    public void DigitPickReturnsTheDigitThRow()
+    {
+        var visible = new[] { Item("a"), Item("b"), Item("c") };
+
+        Assert.Equal("a", PaletteSelection.DigitPick(visible, 1)?.Id);
+        Assert.Equal("c", PaletteSelection.DigitPick(visible, 3)?.Id);
+    }
+
+    [Fact]
+    public void DigitPickBeyondTheVisibleCountDoesNothing()
+    {
+        // Ctrl+9 on a three-row list must not paste the nearest row — the user named a row
+        // that is not on screen, and pasting anything else is worse than pasting nothing.
+        var visible = new[] { Item("a"), Item("b"), Item("c") };
+
+        Assert.Null(PaletteSelection.DigitPick(visible, 4));
+        Assert.Null(PaletteSelection.DigitPick(visible, 9));
+        Assert.Null(PaletteSelection.DigitPick([], 1));
+    }
 }

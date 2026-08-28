@@ -68,6 +68,30 @@ public sealed class DeletedItemUndoBufferTests : IDisposable
     }
 
     [Fact]
+    public void DeleteUndoDeleteAgainRestoresTheAssetEachTime()
+    {
+        // The full user loop: Del, Ctrl+Z, Del again, Ctrl+Z again. The second delete happens
+        // after the first undo copied the asset back, so each Remember must take a fresh copy
+        // of the current bytes rather than reusing a stale backup.
+        Directory.CreateDirectory(_root);
+        var assetPath = Path.Combine(_root, "asset.png");
+        var buffer = new DeletedItemUndoBuffer();
+
+        for (var round = 1; round <= 2; round++)
+        {
+            var bytes = new byte[] { (byte)round, 2, 3 };
+            File.WriteAllBytes(assetPath, bytes);
+            buffer.Remember(Item("a", assetPath));
+            File.Delete(assetPath);
+
+            Assert.Equal("a", buffer.TakeRestored()?.Id);
+            Assert.Equal(bytes, File.ReadAllBytes(assetPath));
+            // The buffer emptied with the undo; a second Ctrl+Z has nothing to hand back.
+            Assert.False(buffer.HasItem);
+        }
+    }
+
+    [Fact]
     public void AMissingAssetDoesNotBlockTheDelete()
     {
         var buffer = new DeletedItemUndoBuffer();

@@ -678,9 +678,12 @@ internal static class PaletteSelection
     /// <summary>
     /// The item that should be selected after a render: the current selection while it is
     /// still visible, otherwise the first visible item, and null when nothing is visible
-    /// (the caller clears the preview pane).
+    /// (the caller clears the preview pane). A null <paramref name="selectedId"/> means
+    /// nothing is selected — typically because an earlier query emptied the list and cleared
+    /// the selection — and lands on the first visible item so Enter has a target again once
+    /// the list refills.
     /// </summary>
-    public static ClipboardHistoryItem? Reconcile(string selectedId, IReadOnlyList<ClipboardHistoryItem> visibleItems)
+    public static ClipboardHistoryItem? Reconcile(string? selectedId, IReadOnlyList<ClipboardHistoryItem> visibleItems)
     {
         foreach (var item in visibleItems)
         {
@@ -730,6 +733,16 @@ internal static class PaletteSelection
         // long, so End's +Count on a huge list cannot overflow past the clamp.
         var next = Math.Clamp((long)index + delta, 0, visibleOrder.Count - 1);
         return visibleOrder[(int)next];
+    }
+
+    /// <summary>
+    /// The item the Ctrl+digit shortcut names: the digit-th row of the on-screen order
+    /// (1-based), or null when the list is shorter than that — a shortcut past the end must
+    /// do nothing rather than paste the nearest row.
+    /// </summary>
+    public static ClipboardHistoryItem? DigitPick(IReadOnlyList<ClipboardHistoryItem> visibleOrder, int digit)
+    {
+        return digit >= 1 && digit <= visibleOrder.Count ? visibleOrder[digit - 1] : null;
     }
 }
 
@@ -3592,15 +3605,22 @@ public partial class MainWindow : Window
 
         UpdateEmptyState(visibleItems.Count);
 
-        // Only reconcile an existing selection. When nothing is selected yet the choice belongs
-        // to SelectInitialItemIfNeeded, which defers the (expensive) first preview render so it
+        // Only reconcile an existing selection — except on search renders, where a null
+        // selection means an earlier query emptied the list (which cleared the selection) and
+        // this render refilled it: Enter needs a target again, so reconcile lands on the first
+        // result. For every other render with nothing selected the choice belongs to
+        // SelectInitialItemIfNeeded, which defers the (expensive) first preview render so it
         // cannot slow the palette's first paint.
-        if (selectedId is not null)
+        var isSearchRender = string.Equals(reason, "search", StringComparison.OrdinalIgnoreCase);
+        if (selectedId is not null || isSearchRender)
         {
             var reconciled = PaletteSelection.Reconcile(selectedId, visibleItems);
             if (reconciled is null)
             {
-                ClearSelection();
+                if (selectedId is not null)
+                {
+                    ClearSelection();
+                }
             }
             else if (reconciled.Id != selectedId)
             {
@@ -9605,10 +9625,9 @@ public partial class MainWindow : Window
         // Ctrl+1..9 pastes the Nth row without arrowing to it first.
         if (Keyboard.Modifiers == ModifierKeys.Control && DigitFromKey(e.Key) is int digit)
         {
-            var order = VisibleOrder(LastRenderedVisibleItems());
-            if (digit - 1 < order.Count)
+            if (PaletteSelection.DigitPick(VisibleOrder(LastRenderedVisibleItems()), digit) is { } picked)
             {
-                SelectItem(order[digit - 1], reason: "digit-paste");
+                SelectItem(picked, reason: "digit-paste");
                 PasteSelected();
                 ShellLog.Info($"digit paste index={digit}");
             }
