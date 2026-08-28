@@ -13,7 +13,7 @@
         Topmost="True"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
-        TextOptions.TextFormattingMode="Ideal"
+        TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="Grayscale"
         TextOptions.TextHintingMode="Auto"
         Deactivated="OnDeactivated"
@@ -263,7 +263,7 @@
             Background="{DynamicResource Bg}"
             UseLayoutRounding="True"
             SnapsToDevicePixels="True"
-            TextOptions.TextFormattingMode="Ideal"
+            TextOptions.TextFormattingMode="Display"
             TextOptions.TextRenderingMode="Grayscale"
             TextOptions.TextHintingMode="Auto"
             ClipToBounds="True">
@@ -294,7 +294,9 @@
                             <ColumnDefinition Width="20"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="⌕" Foreground="{DynamicResource Muted}" FontSize="15" VerticalAlignment="Center"/>
+                        <!-- Vector icon from the same RenderChromeIcon pipeline as the chevrons;
+                             the previous '⌕' text glyph was the one font-rendered icon left. -->
+                        <Image x:Name="SearchGlyphIcon" Width="14" Height="14" Stretch="Uniform" HorizontalAlignment="Left" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
                         <Grid Grid.Column="1">
                             <TextBlock x:Name="SearchPlaceholder"
                                        Text="Search clipboard history..."

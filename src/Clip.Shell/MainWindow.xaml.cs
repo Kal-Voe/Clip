@@ -82,6 +82,13 @@ internal sealed class ClipShellSettings
     public bool ShowSourceAppInList { get; set; } = true;
 
     /// <summary>
+    /// The acrylic glass look: DWM backdrop blur behind the palette with semi-transparent
+    /// background brushes over it. On by default; silently falls back to the opaque palette on
+    /// builds older than Windows 11 22H2 or when DWM refuses (see PaletteBackdrop).
+    /// </summary>
+    public bool TranslucentBackground { get; set; } = true;
+
+    /// <summary>
     /// Capture switched off entirely. Toggled from the watcher's tray menu (another process),
     /// so the live value is read from disk at each capture; this property exists so a settings
     /// save from this process round-trips the key instead of silently dropping it.
@@ -118,6 +125,7 @@ internal sealed class ClipShellSettings
         InstallUpdatesAutomatically = true;
         ExtractTextFromImages = false;
         ShowSourceAppInList = true;
+        TranslucentBackground = true;
         CapturePaused = false;
         ClipboardFolderPath = null;
         Hotkeys = new ClipHotkeySettings();
@@ -1016,6 +1024,10 @@ public partial class MainWindow : Window
             _source?.AddHook(WndProc);
             var hwnd = new WindowInteropHelper(this).Handle;
             ApplyRoundedWindowCorners(hwnd);
+            // The constructor's theme pass ran before the hwnd existed, so it resolved to the
+            // opaque palette; now that the window is real, re-theme so the acrylic backdrop
+            // (if enabled and supported) can actually take.
+            ApplyTheme(_settings.Theme, save: false);
             _lastClipboardSequenceNumber = GetClipboardSequenceNumber();
             var hotkey = false;
             var listener = false;
@@ -1338,6 +1350,7 @@ public partial class MainWindow : Window
                 if (_paletteOpen && TryCloakPaletteWindow(false))
                 {
                     _windowCloaked = false;
+                    ReassertBackdropAfterReveal();
                 }
             }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
@@ -2185,6 +2198,66 @@ public partial class MainWindow : Window
         {
             ShellLog.Error(ex, "cloak toggle failed");
             return false;
+        }
+    }
+
+    /// <summary>True only while DWM has actually accepted the acrylic backdrop for this window.</summary>
+    private bool _backdropActive;
+
+    /// <summary>
+    /// Syncs the DWM backdrop with the Translucent background setting. Called from ApplyTheme so
+    /// theme changes, the settings toggle, and the post-SourceInitialized re-theme all go through
+    /// one path. Before the hwnd exists this resolves to opaque; InitializeShell re-runs the theme
+    /// once the window is real.
+    /// </summary>
+    private void ApplyBackdropPreference()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero)
+        {
+            _backdropActive = false;
+            return;
+        }
+
+        var wantGlass = _settings.TranslucentBackground && PaletteBackdrop.IsSupported();
+        _backdropActive = wantGlass && PaletteBackdrop.TryApply(hwnd);
+        if (!wantGlass)
+        {
+            // Toggled off (or unsupported build): make sure a previously-applied backdrop is gone
+            // rather than blurring behind a now-opaque palette.
+            PaletteBackdrop.Remove(hwnd);
+        }
+
+        // WPF clears its D3D surface with this color before painting brushes over it; left opaque
+        // it would sit between the blur and the semi-transparent Bg no matter what the brushes say.
+        if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is { } target)
+        {
+            target.BackgroundColor = _backdropActive
+                ? System.Windows.Media.Colors.Transparent
+                : ((SolidColorBrush)FindResource("Bg")).Color;
+        }
+
+        ShellLog.Info($"backdrop preference applied want={_settings.TranslucentBackground} supported={PaletteBackdrop.IsSupported()} active={_backdropActive}");
+    }
+
+    /// <summary>
+    /// Cloak/uncloak keeps the window alive but round-trips it through the compositor; per-window
+    /// DWM state is exactly the kind of thing that can quietly not survive that. Re-asserting the
+    /// backdrop is one flag write, so every reveal pays it rather than trusting the compositor.
+    /// </summary>
+    private void ReassertBackdropAfterReveal()
+    {
+        if (!_backdropActive)
+        {
+            return;
+        }
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero && !PaletteBackdrop.TryApply(hwnd))
+        {
+            // DWM said no this time (driver reset, DWM restart). Re-theme opaque rather than
+            // leave a see-through window with nothing behind it.
+            ApplyTheme(_settings.Theme, save: false);
         }
     }
 
@@ -3470,7 +3543,6 @@ public partial class MainWindow : Window
         {
             selectedRow.Background = (WpfBrush)FindResource("Selected");
             selectedRow.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
-            selectedRow.BorderThickness = new Thickness(1);
         }
 
         if (nextIndex < entries.Count)
@@ -3839,7 +3911,9 @@ public partial class MainWindow : Window
             Margin = new Thickness(6, 0, 6, 0),
             Background = item.Id == _selected?.Id ? (WpfBrush)FindResource("Selected") : WpfBrushes.Transparent,
             BorderBrush = item.Id == _selected?.Id ? (WpfBrush)FindResource("SelectedBorder") : WpfBrushes.Transparent,
-            BorderThickness = item.Id == _selected?.Id ? new Thickness(1) : new Thickness(0),
+            // Constant 1px border on every row; selection swaps only the brush. Toggling the
+            // thickness 0<->1 shifted each row's content by a pixel as the selection moved.
+            BorderThickness = new Thickness(1),
             ClipToBounds = true,
             Tag = item,
         };
@@ -4335,7 +4409,6 @@ public partial class MainWindow : Window
         {
             oldRow.Background = WpfBrushes.Transparent;
             oldRow.BorderBrush = WpfBrushes.Transparent;
-            oldRow.BorderThickness = new Thickness(0);
         }
 
         _selected = item;
@@ -4343,7 +4416,6 @@ public partial class MainWindow : Window
         {
             newRow.Background = (WpfBrush)FindResource("Selected");
             newRow.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
-            newRow.BorderThickness = new Thickness(1);
         }
 
         HeaderIcon.Source = IconFor(item, 96);
@@ -6088,7 +6160,9 @@ public partial class MainWindow : Window
             CaretBrush = textCursor,
             SelectionBrush = (WpfBrush)FindResource("TextSelection"),
         };
-        TextOptions.SetTextFormattingMode(box, TextFormattingMode.Ideal);
+        // Display mode, matching the window: Ideal places glyphs at fractional pixels, which is
+        // the classic "WPF text looks soft" cause at these 11-13px sizes.
+        TextOptions.SetTextFormattingMode(box, TextFormattingMode.Display);
         TextOptions.SetTextRenderingMode(box, TextRenderingMode.Grayscale);
         TextOptions.SetTextHintingMode(box, TextHintingMode.Auto);
         box.KeyDown += (_, e) =>
@@ -8800,6 +8874,11 @@ public partial class MainWindow : Window
             _ => IsWindowsDarkMode(),
         };
 
+        // Backdrop first: SetBrush below alpha-blends the background brushes only when the DWM
+        // acrylic actually took, so a failed apply degrades to the plain opaque palette instead
+        // of a see-through window.
+        ApplyBackdropPreference();
+
         SetBrush("Bg", useDark ? "#1A1A1A" : "#F7F7F7");
         SetBrush("Surface", useDark ? "#212121" : "#FFFFFF");
         SetBrush("Surface2", useDark ? "#272727" : "#EDEDED");
@@ -8821,7 +8900,10 @@ public partial class MainWindow : Window
         SetBrush("SelectedBorder", useDark ? "#525252" : "#ACACAC");
         SetBrush("TextSelection", useDark ? "#FF6363" : "#D64545");
         SetBrush("Danger", useDark ? "#D56B5D" : "#B94A3D");
-        Background = (WpfBrush)FindResource("Bg");
+        // With glass on, the window's own background must not paint over the DWM blur; the Shell
+        // border (rounded, semi-opaque Bg) becomes the visible surface — which also makes its
+        // 14px corner radius the real silhouette instead of being buried under an opaque fill.
+        Background = _backdropActive ? WpfBrushes.Transparent : (WpfBrush)FindResource("Bg");
         _setHtmlPreviewBackground?.Invoke(ToDrawingColor((SolidColorBrush)FindResource("Surface")));
 
         // Browser-backed previews bake theme colors into their generated pages, so a theme
@@ -8887,6 +8969,7 @@ public partial class MainWindow : Window
 
     private void RefreshChromeIcons()
     {
+        SearchGlyphIcon.Source = RenderChromeIcon(ChromeIconKind.Search, "Muted");
         SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "Muted2");
         DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "Muted2");
         FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "Muted2");
@@ -8918,6 +9001,7 @@ public partial class MainWindow : Window
         Settings,
         ChevronDown,
         Expand,
+        Search,
     }
 
     private enum ItemVectorIconKind
@@ -8965,6 +9049,13 @@ public partial class MainWindow : Window
                     new System.Windows.Point(6.5, 9),
                     new System.Windows.Point(12, 14.5),
                     new System.Windows.Point(17.5, 9))));
+                break;
+
+            case ChromeIconKind.Search:
+                // Lens sized so the icon reads at the 14px it is shown at, matching the weight
+                // of the '⌕' glyph it replaced.
+                drawing.Children.Add(new GeometryDrawing(null, pen, new EllipseGeometry(new System.Windows.Point(10.5, 10.5), 5.8, 5.8)));
+                AddLine(drawing, pen, 14.9, 14.9, 19.5, 19.5);
                 break;
 
             case ChromeIconKind.Expand:
@@ -9192,6 +9283,13 @@ public partial class MainWindow : Window
 
     private void SetBrush(string key, string hex)
     {
+        // Single choke point for the glass look: every themed brush passes through here, so the
+        // translucent variant is one transform instead of a second palette.
+        if (_backdropActive)
+        {
+            hex = PaletteBackdrop.GlassHex(key, hex);
+        }
+
         var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex);
         if (Resources[key] is SolidColorBrush brush)
         {
@@ -12367,6 +12465,7 @@ internal sealed class SettingsWindow : Window
         if (string.Equals(page, "Appearance", StringComparison.OrdinalIgnoreCase))
         {
             panel.Children.Add(ThemeRow());
+            panel.Children.Add(TranslucentBackgroundRow());
             panel.Children.Add(AppIconRow());
         }
 
@@ -13483,6 +13582,34 @@ internal sealed class SettingsWindow : Window
             AppIconPicker());
     }
 
+    private Border TranslucentBackgroundRow()
+    {
+        var supported = PaletteBackdrop.IsSupported();
+        var description = supported
+            ? "Let the desktop blur through the palette, like the Windows 11 flyouts."
+            : "Unavailable: needs Windows 11 22H2 or later.";
+
+        var dropdown = StyledDropdown(
+            _settings.TranslucentBackground ? "On" : "Off",
+            new[] { "On", "Off" },
+            selected =>
+            {
+                var enabled = string.Equals(selected, "On", StringComparison.OrdinalIgnoreCase);
+                if (enabled == _settings.TranslucentBackground)
+                {
+                    return;
+                }
+
+                _settings.TranslucentBackground = enabled;
+                // Re-applying the theme is what applies or removes the backdrop and swaps the
+                // brushes between the glass and opaque palettes — and it saves the setting.
+                _applyTheme(_settings.Theme);
+            });
+        dropdown.IsEnabled = supported;
+
+        return ControlRow("Translucent background", description, dropdown);
+    }
+
     private FrameworkElement ThemeToggleDropdown()
     {
         var host = new Grid { Width = 74, Height = 30 };
@@ -14506,7 +14633,7 @@ internal sealed class TextEditWindow : Window
         ShowInTaskbar = false;
         UseLayoutRounding = true;
         SnapsToDevicePixels = true;
-        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
         TextOptions.SetTextRenderingMode(this, TextRenderingMode.Grayscale);
         TextOptions.SetTextHintingMode(this, TextHintingMode.Auto);
         SourceInitialized += (_, _) => MainWindow.ApplyRoundedWindowCorners(new WindowInteropHelper(this).Handle);
@@ -14523,7 +14650,7 @@ internal sealed class TextEditWindow : Window
         _box.AcceptsReturn = true;
         _box.FocusVisualStyle = null;
         _box.SnapsToDevicePixels = true;
-        TextOptions.SetTextFormattingMode(_box, TextFormattingMode.Ideal);
+        TextOptions.SetTextFormattingMode(_box, TextFormattingMode.Display);
         TextOptions.SetTextRenderingMode(_box, TextRenderingMode.Grayscale);
         TextOptions.SetTextHintingMode(_box, TextHintingMode.Auto);
         _box.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;

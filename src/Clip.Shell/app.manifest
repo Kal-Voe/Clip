@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <!-- Per-Monitor V2 DPI awareness. Without a manifest, WPF on .NET 8 runs System-DPI-aware,
+       so on any monitor whose scale differs from the primary the whole palette is rendered at
+       the primary's DPI and bitmap-stretched by Windows - visibly blurry. The palette opens on
+       whichever monitor the cursor is on, so mixed-DPI setups hit this constantly. WPF handles
+       WM_DPICHANGED itself under PMv2; the dpiAware element is the fallback for builds older
+       than the dpiAwareness element (Win10 1607). -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

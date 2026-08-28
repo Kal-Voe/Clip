@@ -17,6 +17,7 @@ public sealed class SettingsResetTests
             MaxItemSizeBytes = 10 * 1024 * 1024,
             CheckForUpdatesOnStartup = false,
             InstallUpdatesAutomatically = true,
+            TranslucentBackground = false,
             Hotkeys = new ClipHotkeySettings
             {
                 OpenClip = "Ctrl+Space",
@@ -35,6 +36,7 @@ public sealed class SettingsResetTests
         Assert.Equal(50L * 1024 * 1024, settings.MaxItemSizeBytes);
         Assert.True(settings.CheckForUpdatesOnStartup);
         Assert.True(settings.InstallUpdatesAutomatically);
+        Assert.True(settings.TranslucentBackground);
         Assert.Equal("Alt+V", settings.Hotkeys.OpenClip);
         Assert.Equal("Ctrl+Shift+L", settings.Hotkeys.SaveDebugLog);
         Assert.Empty(settings.Privacy.ExcludedApps);

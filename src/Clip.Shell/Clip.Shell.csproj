@@ -31,6 +31,11 @@
     <Product>Clip</Product>
     <Description>Local Windows clipboard history app.</Description>
     <ApplicationIcon>..\..\assets\app-icons\clip-tile-light.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- WFAC010: the WinForms analyzer wants DPI set through Application.SetHighDpiMode, but
+         this is a WPF app (WinForms is only along for Screen/FolderBrowserDialog) and WPF reads
+         Per-Monitor V2 from the manifest — the supported mechanism here. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
