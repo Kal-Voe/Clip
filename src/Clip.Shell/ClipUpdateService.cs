@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Clip.Core;
@@ -113,7 +114,7 @@ internal sealed class ClipUpdateService
 
             ZipFile.ExtractToDirectory(path, extractFolder);
             var scriptPath = Path.Combine(Path.GetDirectoryName(path)!, "Install-ClipUpdate.ps1");
-            File.WriteAllText(scriptPath, BuildInstallScript(
+            WriteInstallScript(scriptPath, BuildInstallScript(
                 extractFolder, installDirectory, processId, ClipStoragePaths.WebView2UserDataFolderPath));
             Process.Start(new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"")
             {
@@ -130,6 +131,17 @@ internal sealed class ClipUpdateService
             UseShellExecute = true,
         });
         return false;
+    }
+
+    /// <summary>
+    /// Writes the install script with a UTF-8 BOM. Windows PowerShell 5.1 reads a BOM-less
+    /// .ps1 as ANSI, so the baked-in paths would come out mojibake for any install folder with
+    /// a character outside the system codepage — the copy would then target a garbage folder
+    /// name and the relaunch would miss Clip.exe entirely. The BOM makes the encoding explicit.
+    /// </summary>
+    internal static void WriteInstallScript(string scriptPath, string script)
+    {
+        File.WriteAllText(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
 
     /// <summary>

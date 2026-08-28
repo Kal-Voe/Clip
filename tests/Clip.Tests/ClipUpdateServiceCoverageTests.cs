@@ -206,6 +206,55 @@ public sealed class ClipUpdateServiceCoverageTests
     }
 
     [Fact]
+    public void InstallScriptCopiesIntoUnicodeAndSpacedInstallPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "Clip.Tests", $"{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var probe = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })!;
+            probe.WaitForExit();
+
+            var source = Path.Combine(root, "extract");
+            Directory.CreateDirectory(source);
+            File.WriteAllText(Path.Combine(source, "payload.txt"), "new build");
+
+            // The hostile-but-real shapes an install folder can take: spaces, an apostrophe,
+            // and characters outside every ANSI codepage. Windows PowerShell reads a BOM-less
+            // .ps1 as ANSI, so before WriteInstallScript stamped the BOM these paths decoded
+            // as mojibake and the copy landed in a garbage-named folder.
+            var target = Path.Combine(root, "Program Files", "o'brien の Clip");
+            var script = ClipUpdateService.BuildInstallScript(
+                source, target, probe.Id, Path.Combine(root, "webview-data-that-matches-no-process"));
+            var scriptPath = Path.Combine(root, "Install-ClipUpdate.ps1");
+            ClipUpdateService.WriteInstallScript(scriptPath, script);
+
+            // The BOM is the load-bearing byte sequence — without it the whole unicode-path
+            // guarantee silently evaporates on machines whose ANSI codepage is not UTF-8.
+            Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, File.ReadAllBytes(scriptPath).Take(3).ToArray());
+
+            using var powershell = Process.Start(new ProcessStartInfo(
+                "powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })!;
+
+            Assert.True(powershell.WaitForExit(60_000), "install script did not finish");
+            Assert.Equal(0, powershell.ExitCode);
+            Assert.Equal("new build", File.ReadAllText(Path.Combine(target, "payload.txt")));
+        }
+        finally
+        {
+            TestTemp.Delete(root);
+        }
+    }
+
+    [Fact]
     public void InstallScriptRelaunchesClipWhenEveryCopyAttemptFails()
     {
         var root = Path.Combine(Path.GetTempPath(), "Clip.Tests", $"{Guid.NewGuid():N}");
