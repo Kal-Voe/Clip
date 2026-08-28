@@ -795,6 +795,10 @@ public partial class MainWindow : Window
     // the list short of a screen, and doubled the open while it waited for the next batch.
     private const int InitialRenderEntryBatch = 12;
     private const int DeferredRenderEntryBatch = 36;
+    // Rows a concealed palette is allowed to keep materialized. Sits well above what an ordinary
+    // open builds (the initial batch plus enough deferred batches to make the list scrollable,
+    // ~48 rows), so only a genuinely deep scroll pays a rebuild on the next open.
+    private const int ConcealedRowReclaimThreshold = InitialRenderEntryBatch + (3 * DeferredRenderEntryBatch);
     private const int InitialSummaryFirstPaintLimit = 8;
     private const int DebugOpenSurfaceMaxAttempts = 80;
     private const long SummaryPreloadMaximumBytes = 2L * 1024 * 1024;
@@ -1796,10 +1800,27 @@ public partial class MainWindow : Window
         ListScroll.ScrollToTop();
     }
 
+    /// <summary>
+    /// Whether enough rows are materialized that reclaiming them is worth re-rendering the
+    /// initial batch on the next open. Marking the items dirty is what triggers that rebuild;
+    /// under the threshold the rows are left alone, because reusing them is exactly what makes a
+    /// warm reopen instant.
+    /// </summary>
+    internal static bool ShouldReclaimRowsOnConceal(int materializedRows) =>
+        materializedRows > ConcealedRowReclaimThreshold;
+
     private void ConcealPalette(string reason)
     {
         StopOutsideClickWatch();
         ResetPaletteViewForNextOpen();
+        // A deep scroll materializes hundreds of rows, and a concealed palette would keep that
+        // whole visual tree alive until something else re-rendered. Going dirty makes the next
+        // open rebuild just the initial batch — the same path a fresh open takes.
+        if (ShouldReclaimRowsOnConceal(_rows.Count))
+        {
+            _itemsDirtySinceRender = true;
+        }
+
         _paletteOpen = false;
         Opacity = 0;
         IsHitTestVisible = false;
@@ -7757,8 +7778,27 @@ public partial class MainWindow : Window
         if (!_paletteOpen)
         {
             DisposeHtmlPreview();
+            ReleaseIdleImagePreviews();
             ShellLog.Info("html preview released after idle");
         }
+    }
+
+    /// <summary>
+    /// Lets go of the decoded 900px previews once the palette has sat concealed for the same
+    /// three minutes that tear the WebView2 down. A dozen screenshot-sized decodes pin 20-25MB
+    /// while nobody is looking; the reveal path re-renders the selected preview anyway, and the
+    /// neighbour prefetch refills the cache on the first arrow step. The 48px row-icon cache is
+    /// deliberately kept — it is tiny and it is what makes a reopen paint instantly.
+    /// </summary>
+    private void ReleaseIdleImagePreviews()
+    {
+        lock (RasterImageCacheGate)
+        {
+            PreviewImageCache.Clear();
+        }
+
+        ImagePreview.Source = null;
+        _currentPreviewImagePath = null;
     }
 
     // Tears down the WebView2 (and its Chromium processes) so nothing browser-related

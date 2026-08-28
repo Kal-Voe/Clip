@@ -1,0 +1,72 @@
+﻿{
+    "Label":  "after-perf-batch",
+    "TakenUtc":  "2026-08-28T18:34:41.4512382Z",
+    "Commit":  "90f75e5",
+    "Exe":  "C:\\Users\\icalvo\\Documents\\Codex\\Clip\\src\\Clip.Shell\\bin\\Release\\net8.0-windows10.0.19041.0\\Clip.exe",
+    "FixtureRoot":  "C:\\Users\\icalvo\\AppData\\Local\\Clip-bench-fixture",
+    "SessionLocked":  false,
+    "ColdRuns":  3,
+    "WarmRuns":  8,
+    "Results":  [
+                    {
+                        "Page":  "palette",
+                        "ColdMedianMs":  123.7,
+                        "ColdP95Ms":  161.1,
+                        "WarmMedianMs":  80,
+                        "WarmP95Ms":  119,
+                        "ReadyMedianMs":  null,
+                        "ColdSamples":  [
+                                            165.2601,
+                                            108.8811,
+                                            123.7015
+                                        ],
+                        "WarmSamples":  [
+                                            91.2229,
+                                            84.0803,
+                                            62.3935,
+                                            44.7047,
+                                            133.7311,
+                                            91.7107,
+                                            67.2897,
+                                            75.8914
+                                        ],
+                        "ReadySamples":  [
+
+                                         ]
+                    },
+                    {
+                        "Page":  "preview-image",
+                        "ColdMedianMs":  182.6,
+                        "ColdP95Ms":  232.6,
+                        "WarmMedianMs":  69.5,
+                        "WarmP95Ms":  88.2,
+                        "ReadyMedianMs":  154.2,
+                        "ColdSamples":  [
+                                            182.5604,
+                                            238.1092,
+                                            137.3501
+                                        ],
+                        "WarmSamples":  [
+                                            70.8332,
+                                            92.5869,
+                                            65.6564,
+                                            80.0335,
+                                            78.6042,
+                                            42.8472,
+                                            52.2409,
+                                            68.1081
+                                        ],
+                        "ReadySamples":  [
+                                             179.0115,
+                                             154.3735,
+                                             155.4264,
+                                             107.7031,
+                                             129.5676,
+                                             154.2477,
+                                             106.4346,
+                                             157.5829,
+                                             116.8758
+                                         ]
+                    }
+                ]
+}
