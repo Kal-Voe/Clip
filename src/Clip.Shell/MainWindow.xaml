@@ -321,7 +321,7 @@
                         </StackPanel>
                     </Border>
                     <Button x:Name="TextButton" Content="Text" Style="{StaticResource FilterButton}" Click="OnTextFilterClick" Margin="4,0,0,0" Width="44"/>
-                    <Border x:Name="MediaFilterShell" CornerRadius="5" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Margin="4,0,0,0">
+                    <Border x:Name="MediaFilterShell" CornerRadius="5" Background="Transparent" BorderBrush="{DynamicResource Line2}" BorderThickness="1" Margin="4,0,0,0">
                         <StackPanel Orientation="Horizontal">
                             <Button x:Name="ImageButton" Content="Media" Style="{StaticResource PillSegmentLeft}" Click="OnImageFilterClick" Background="Transparent" Width="52"/>
                             <Border Width="1" Background="{DynamicResource Line2}" Opacity="0.55"/>
@@ -332,7 +332,7 @@
                     </Border>
                     <Button x:Name="LinksButton" Content="Links" Style="{StaticResource FilterButton}" Click="OnLinksFilterClick" Margin="4,0,0,0" Width="50"/>
                     <Button x:Name="ColorButton" Content="Color" Style="{StaticResource FilterButton}" Click="OnColorFilterClick" Margin="4,0,0,0" Width="52"/>
-                    <Border x:Name="FilesFilterShell" CornerRadius="5" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Margin="4,0,0,0">
+                    <Border x:Name="FilesFilterShell" CornerRadius="5" Background="Transparent" BorderBrush="{DynamicResource Line2}" BorderThickness="1" Margin="4,0,0,0">
                         <StackPanel Orientation="Horizontal">
                             <Button x:Name="FilesButton" Content="File" Style="{StaticResource PillSegmentLeft}" Click="OnFilesFilterClick" Background="Transparent" Width="38"/>
                             <Border Width="1" Background="{DynamicResource Line2}" Opacity="0.55"/>

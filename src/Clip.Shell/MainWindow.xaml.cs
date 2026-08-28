@@ -9225,9 +9225,10 @@ public partial class MainWindow : Window
         if (shell is not null)
         {
             // Split pill: the shell carries the whole selected look so the button half and the
-            // chevron half can never drift apart visually.
+            // chevron half can never drift apart visually. Unselected pills keep a neutral
+            // outline so the button+dropdown always reads as one bounded control.
             shell.Background = selected ? selectedFill : WpfBrushes.Transparent;
-            shell.BorderBrush = selected ? selectedBorder : WpfBrushes.Transparent;
+            shell.BorderBrush = selected ? selectedBorder : (WpfBrush)FindResource("Line2");
             button.Background = WpfBrushes.Transparent;
             button.BorderBrush = WpfBrushes.Transparent;
         }
