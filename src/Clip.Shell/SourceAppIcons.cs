@@ -137,6 +137,53 @@ internal static class SourceAppIcons
     }
 
     /// <summary>
+    /// Cache-only thumbnail lookup, mirroring <see cref="TryGetCached"/>: false when the file's
+    /// thumbnail has not been extracted yet, so a row being built on the UI thread can paint its
+    /// type glyph instead of waiting on the shell. True with a null image means the shell was
+    /// already asked and has no thumbnail to give — asking again will not change the answer.
+    /// </summary>
+    public static bool TryGetCachedThumbnail(string filePath, int logicalSize, double dpiScale, out ImageSource? thumbnail)
+    {
+        thumbnail = null;
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return false;
+        }
+
+        var key = $"thumb|{filePath}|{NativeSizeFor(logicalSize, dpiScale)}";
+        lock (Gate)
+        {
+            if (!Cache.TryGetValue(key, out thumbnail))
+            {
+                return false;
+            }
+
+            Touch(key);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Extracts a thumbnail off the UI thread and invokes <paramref name="onResolved"/> on the
+    /// worker, the same way <see cref="ResolveAsync"/> does for icons — extraction needs the same
+    /// STA shell machinery and shares its newest-first queue.
+    /// </summary>
+    public static void ThumbnailAsync(string filePath, int logicalSize, double dpiScale, Action<ImageSource?> onResolved)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return;
+        }
+
+        lock (PendingGate)
+        {
+            Pending.AddFirst(() => onResolved(Thumbnail(filePath, logicalSize, dpiScale)));
+            EnsureWorker();
+            PendingSignal.Set();
+        }
+    }
+
+    /// <summary>
     /// Resolves off the UI thread and invokes <paramref name="onResolved"/> on the worker.
     /// Shell extensions require STA, so this uses a dedicated STA thread rather than the thread
     /// pool. Newest request first, so a fast scroll resolves what is on screen rather than what

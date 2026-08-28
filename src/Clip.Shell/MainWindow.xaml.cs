@@ -3929,9 +3929,6 @@ public partial class MainWindow : Window
 
         var icon = new WpfImage
         {
-            // Rich preview means an image row shows a thumbnail of the actual image rather than a
-            // generic picture glyph, which is what makes a list of screenshots scannable.
-            Source = IconFor(item, 96, preferRichPreview: true),
             // The text and audio marks are denser shapes than the outlined document glyph, so
             // they read heavier at the same box and sit smaller.
             Width = RowIconSize(item),
@@ -3940,6 +3937,12 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             SnapsToDevicePixels = true,
         };
+        // Rich preview means an image row shows a thumbnail of the actual image rather than a
+        // generic picture glyph, which is what makes a list of screenshots scannable. A cold
+        // thumbnail arrives late through the callback: each icon element belongs to exactly one
+        // item and rows are rebuilt per render, so a swap landing on a discarded element is
+        // harmless — no tag guard needed the way the shared header icon needs one.
+        icon.Source = IconFor(item, 96, preferRichPreview: true, onRicher: richer => icon.Source = richer);
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         AttachFavicon(icon, item);
         grid.Children.Add(icon);
@@ -4420,7 +4423,15 @@ public partial class MainWindow : Window
             newRow.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
         }
 
-        HeaderIcon.Source = IconFor(item, 96);
+        // The header is one shared element, so a slow thumbnail must not paint over whatever
+        // item is selected by the time it arrives.
+        HeaderIcon.Source = IconFor(item, 96, onRicher: richer =>
+        {
+            if (_selected?.Id == item.Id)
+            {
+                HeaderIcon.Source = richer;
+            }
+        });
         AttachFavicon(HeaderIcon, item);
         TitleText.Text = TitleFor(item);
         SubTitleText.Text = HeaderSubtitleFor(item);
@@ -10127,7 +10138,15 @@ public partial class MainWindow : Window
         ext is ".doc" or ".docx" or ".xls" or ".xlsx" or ".xlsm" or ".ppt" or ".pptx";
     private static bool IsTextFile(string ext) => ext is ".txt" or ".log" or ".md" or ".csv" or ".json" or ".xml" or ".css" or ".js" or ".ts" or ".cs" or ".bat" or ".cmd" or ".ps1" or ".py" or ".html" or ".htm";
 
-    private ImageSource IconFor(ClipboardHistoryItem item, int size, bool preferRichPreview = true)
+    /// <summary>
+    /// The icon for a row or the preview header. Image and video items want a thumbnail of their
+    /// actual content, and producing one can mean a disk decode or a shell frame extraction —
+    /// work that must not run on the UI thread mid-open. Callers that pass
+    /// <paramref name="onRicher"/> get the cheap vector glyph back immediately on a cache miss
+    /// and the rich thumbnail delivered on the dispatcher once a worker has it; callers without
+    /// the callback keep the old synchronous behavior.
+    /// </summary>
+    private ImageSource IconFor(ClipboardHistoryItem item, int size, bool preferRichPreview = true, Action<ImageSource>? onRicher = null)
     {
         try
         {
@@ -10139,7 +10158,7 @@ public partial class MainWindow : Window
             if (item.Kind == ClipboardItemKind.Image && item.AssetPath is not null && File.Exists(item.AssetPath))
             {
                 return preferRichPreview
-                    ? LoadCachedBitmap(item.AssetPath, RowIconDecodePixels)
+                    ? RowThumbnailOrGlyph(item.AssetPath, size, onRicher)
                     : RenderItemVectorIcon(ItemVectorIconKind.Image, size);
             }
 
@@ -10180,17 +10199,44 @@ public partial class MainWindow : Window
 
                 if (File.Exists(path) && IsImageFile(Path.GetExtension(path).ToLowerInvariant()))
                 {
-                    return LoadCachedBitmap(path, RowIconDecodePixels);
+                    return RowThumbnailOrGlyph(path, size, onRicher);
                 }
 
                 // A video should show a frame from itself, the way File Explorer does, rather than
                 // a generic film glyph. Falls back to the type icon when Windows has no thumbnail.
                 if (IsVideoFile(Path.GetExtension(path).ToLowerInvariant()))
                 {
-                    var frame = SourceAppIcons.Thumbnail(path, size, VisualTreeHelper.GetDpi(this).DpiScaleX);
-                    if (frame is not null)
+                    var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                    if (SourceAppIcons.TryGetCachedThumbnail(path, size, dpiScale, out var frame))
                     {
-                        return frame;
+                        if (frame is not null)
+                        {
+                            return frame;
+                        }
+
+                        // A cached null means Windows has no thumbnail for this file; the type
+                        // icon below is the answer and asking again will not change it.
+                    }
+                    else if (onRicher is not null)
+                    {
+                        // Cold extraction can spend hundreds of milliseconds pulling a frame out
+                        // of a video — far too long for a row being built during the open. The
+                        // STA worker extracts it and the caller swaps it in over the type icon.
+                        SourceAppIcons.ThumbnailAsync(path, size, dpiScale, resolved =>
+                        {
+                            if (resolved is not null)
+                            {
+                                Dispatcher.BeginInvoke(() => onRicher(resolved), System.Windows.Threading.DispatcherPriority.Background);
+                            }
+                        });
+                    }
+                    else
+                    {
+                        var extracted = SourceAppIcons.Thumbnail(path, size, dpiScale);
+                        if (extracted is not null)
+                        {
+                            return extracted;
+                        }
                     }
                 }
 
@@ -10204,6 +10250,43 @@ public partial class MainWindow : Window
             ShellLog.Error(ex, $"icon failed id={item.Id}");
             return BitmapFromDrawingImage(System.Drawing.SystemIcons.Application.ToBitmap());
         }
+    }
+
+    /// <summary>
+    /// A row-sized thumbnail for an image file, without decoding on the UI thread. Already in the
+    /// cache: back immediately. Not yet, and the caller supplied <paramref name="onRicher"/>: the
+    /// vector glyph now, the thumbnail via the dispatcher once a worker has decoded it. No
+    /// callback: the old synchronous decode — those callers sit off the open path, where a
+    /// two-frame flash of glyph would cost more than the wait it hides.
+    /// </summary>
+    private ImageSource RowThumbnailOrGlyph(string path, int size, Action<ImageSource>? onRicher)
+    {
+        if (TryGetCachedRaster(RasterCacheKey("bitmap", path, RowIconDecodePixels), out var cached))
+        {
+            return cached;
+        }
+
+        if (onRicher is null)
+        {
+            return LoadCachedBitmap(path, RowIconDecodePixels);
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                // LoadBitmap freezes what it returns, so decoding off-thread is safe.
+                var bitmap = LoadCachedBitmap(path, RowIconDecodePixels);
+                Dispatcher.BeginInvoke(() => onRicher(bitmap), System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch
+            {
+                // A thumbnail that will not decode leaves the glyph up, which is the fallback
+                // this kind of item renders anyway.
+            }
+        });
+
+        return RenderItemVectorIcon(ItemVectorIconKind.Image, size);
     }
 
     private ImageSource RenderFileSvg(string path, int size)

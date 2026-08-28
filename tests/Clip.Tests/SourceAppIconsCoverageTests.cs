@@ -156,6 +156,50 @@ public sealed class SourceAppIconsCoverageTests : IDisposable
     }
 
     [Fact]
+    public void TryGetCachedThumbnailMissesBeforeExtractionAndHitsAfter()
+    {
+        var png = CreatePngFile();
+
+        Assert.False(SourceAppIcons.TryGetCachedThumbnail(png, 96, 1.0, out var miss));
+        Assert.Null(miss);
+        Assert.False(SourceAppIcons.TryGetCachedThumbnail("", 96, 1.0, out _));
+
+        var extracted = RunSta(() => SourceAppIcons.Thumbnail(png, 96, 1.0));
+        Assert.NotNull(extracted);
+
+        // Must come from the cache: same instance, no shell round trip needed.
+        Assert.True(SourceAppIcons.TryGetCachedThumbnail(png, 96, 1.0, out var cached));
+        Assert.Same(extracted, cached);
+    }
+
+    [Fact]
+    public void ThumbnailAsyncInvokesCallbackOnWorker()
+    {
+        var png = CreatePngFile();
+        using var done = new ManualResetEventSlim(false);
+        ImageSource? resolved = null;
+
+        SourceAppIcons.ThumbnailAsync(png, 48, 1.0, thumbnail =>
+        {
+            resolved = thumbnail;
+            done.Set();
+        });
+
+        Assert.True(done.Wait(TimeSpan.FromSeconds(10)));
+        Assert.NotNull(resolved);
+    }
+
+    [Fact]
+    public void ThumbnailAsyncIgnoresEmptyPath()
+    {
+        using var done = new ManualResetEventSlim(false);
+
+        SourceAppIcons.ThumbnailAsync("", 48, 1.0, _ => done.Set());
+
+        Assert.False(done.Wait(TimeSpan.FromMilliseconds(250)));
+    }
+
+    [Fact]
     public void ResolveAsyncInvokesCallbackOnWorker()
     {
         var file = CreateTextFile();
