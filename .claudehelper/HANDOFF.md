@@ -3,6 +3,54 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## The glass never actually showed, and the header wore a dark rectangle (2026-08-28, v1.2.2/v1.2.3)
+
+Isaiah on v1.2.1: the header controls sit "inside of a dark rectangle" and look staggered, and the
+transparency is nowhere near Raycast or asyar.
+
+**One root cause behind both.** The themed brushes are STACKED, so alpha compounds. The Shell paints
+the Bg sheet; then children repainted the same brushes on top as full-area backgrounds. The worst
+was MainWindow.xaml's header Grid painting `Bg` over the Shell's `Bg`, inset by `Margin="12,10"` and
+square-cornered — invisible while opaque (same color, fully opaque), a distinct block once alpha
+existed. That is the dark rectangle. The same stacking at `Surface`/`Surface2` across the list
+column, preview, footer and info panel put a zone at ~98% opaque, which is why no desktop ever blurred
+through. The rule now documented on `GlassHex`: the Shell is the single sheet, everything on it is a
+relative tint, never a restatement of the base color. Bg went CC -> A6, the Surface family E6 -> 5C,
+so a zone composites to ~78% (`1-(1-aBg)*(1-aSurface)`) — a test asserts that band so nobody nudges
+it back. `PaletteBackdrop.Opaque` opts out the popups and owned windows, which are their own HWNDs
+with no acrylic under them and would otherwise show the list rows through their own text.
+
+**Two things that only showed up on screen, after installing 1.2.2 and looking:**
+- A header left on the bare sheet was a whole layer *more* transparent than everything below it —
+  the desktop read straight through it. Same band, inverted. It now carries the Surface2 zone tint
+  full-bleed, with the 12,10 margin kept on the transparent content Grid (a margin on the *painted*
+  element is what squared off the rectangle in the first place).
+- `Line2` and `Muted` are opaque and so pass through GlassHex untouched, but what they sit on no
+  longer does: at ~78% over a blurred desktop the unselected chip outlines vanished and their labels
+  went to mush. Lifted to #6E6E6E / #ABABAB in dark. Raise the ink, never the sheet's alpha — the
+  latter just undoes the glass.
+
+**Header chips** are now one uniform control: FilterButton defaults `BorderBrush` to Line2 and the
+pill segments dropped to 26 so a shell's own 1px outline brings it back to 28 — six identical chips
+on one baseline, instead of three 30px outlined pills beside three bare 28px labels. Per the v1.1.14
+decision, the plain chips gained the outline rather than the pills losing theirs.
+
+Also hardened the corners: `Border.ClipToBounds` clips to the bounds rectangle, not the CornerRadius,
+so any child with a background paints square into the rounded corners — DWM's clip hid it, making it
+a latent trap. `MainWindow.ShellClipGeometry` now gives the Shell a real rounded clip, driven from
+SizeChanged and from all four `Shell.CornerRadius` sites (fullscreen/expanded flatten it to 0).
+
+1059 tests green. Verified on screen at each step with magnified captures of the corners and header.
+Note for next time: the capture must be DPI-aware AND retry until the palette lands on the primary
+monitor — it opens on the cursor's monitor, and the secondary one captures black.
+
+### Next steps
+
+1. Isaiah judges the alpha. Both numbers are one `switch` in `PaletteBackdrop.GlassHex`: Surface
+   toward 0x40 for more glass, 0x70 for more solid. The test asserts a band, so a small move stays
+   green and a big one fails loudly.
+2. Light theme is unverified — all the contrast reasoning was dark-theme.
+
 ## The glass corners showed two arcs (2026-08-28, released v1.2.1)
 
 Isaiah, on the v1.2.0 palette: "the corners look bad." Magnified pixel capture of the live window

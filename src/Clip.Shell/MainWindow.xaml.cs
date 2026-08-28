@@ -9042,9 +9042,15 @@ public partial class MainWindow : Window
         SetBrush("Surface2", useDark ? "#272727" : "#EDEDED");
         SetBrush("Surface3", useDark ? "#323232" : "#DCDCDC");
         SetBrush("Line", useDark ? "#494949" : "#B8B8B8");
-        SetBrush("Line2", useDark ? "#5A5A5A" : "#989898");
+        // Line2 and Muted are lifted in dark from #5A5A5A/#989898. Both are opaque and so pass
+        // through GlassHex untouched, but what they sit on no longer does: a zone is ~78% over a
+        // blurred desktop instead of a flat #1A1A1A, which pulls the backdrop up under them and
+        // eats the contrast. At the old values the unselected filter chips lost their outlines and
+        // their labels went to mush over a bright wallpaper. Raising the ink is the fix, not
+        // raising the sheet's alpha back up — that would just undo the glass.
+        SetBrush("Line2", useDark ? "#6E6E6E" : "#989898");
         SetBrush("Text", useDark ? "#F1F1F1" : "#1A1A1A");
-        SetBrush("Muted", useDark ? "#989898" : "#646464");
+        SetBrush("Muted", useDark ? "#ABABAB" : "#646464");
         SetBrush("Muted2", useDark ? "#BBBBBB" : "#474747");
         SetBrush("Muted3", useDark ? "#777777" : "#6A6A6A");
         // Raycast palette: fixed brand red (#FF6363) used sparingly, never the Windows accent.

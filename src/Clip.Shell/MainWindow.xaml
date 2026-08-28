@@ -302,6 +302,15 @@
                 <RowDefinition x:Name="FooterRowDef" Height="34"/>
             </Grid.RowDefinitions>
 
+            <!-- The header's zone tint, full-bleed on purpose. Every other band (list column, preview,
+                 footer) is a Surface family tint over the Bg sheet, so a header left on the bare
+                 sheet sat a whole layer more transparent than everything under it and the desktop
+                 read straight through it — the same band, just inverted. This carries the tint so
+                 the row matches its neighbours; the content Grid below keeps the 12,10 margin and
+                 stays transparent, because a margin on the *painted* element is what squared off a
+                 rectangle inside the header last time. -->
+            <Border Grid.Row="0" Background="{DynamicResource Surface2}"/>
+
             <!-- Transparent, never Bg: the Shell below already paints the Bg sheet, so painting it
                  again here stacked a second 65% layer inset by the margin and squared off at the
                  corners — the "dark rectangle behind the controls". Transparent and not null on
