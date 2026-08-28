@@ -841,6 +841,7 @@ public partial class MainWindow : Window
     private readonly System.Windows.Threading.DispatcherTimer _paletteSessionExitTimer = new() { Interval = PaletteSessionKeepAlive };
     private bool _settingsCachesWarmed;
     private IReadOnlyList<ClipboardHistoryItem> _allItems = [];
+    private IReadOnlyList<ClipboardHistoryItem>? _renderedVisibleItems;
     private ClipboardHistoryItem? _selected;
     private ClipboardHistoryItem? _pendingTextClipboardItem;
     private DateTime _pendingTextClipboardItemAt;
@@ -3526,6 +3527,7 @@ public partial class MainWindow : Window
         var watch = Stopwatch.StartNew();
         var selectedId = _selected?.Id;
         var visibleItems = FilteredItems();
+        _renderedVisibleItems = visibleItems;
         var entries = RenderEntries(visibleItems);
         var generation = ++_renderGeneration;
         ItemsHost.Children.Clear();
@@ -4821,7 +4823,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void PrefetchNeighbouringImages(ClipboardHistoryItem selected)
     {
-        var visible = FilteredItems();
+        var visible = LastRenderedVisibleItems();
         var index = -1;
         for (var i = 0; i < visible.Count; i++)
         {
@@ -4898,7 +4900,7 @@ public partial class MainWindow : Window
     {
         InfoHost.Children.Clear();
         InfoScroll.ScrollToTop();
-        AddInfo("Source", SourceDisplayName(item), SourceIcon(item));
+        AddSourceInfo(item);
         AddInfo("Content type", ContentType(item));
 
         // For an image the dimensions are the most useful fact about it, so they belong near the
@@ -5005,7 +5007,46 @@ public partial class MainWindow : Window
             TextPreview.Template?.FindName("PART_ContentHost", TextPreview) as ScrollViewer)).OnScroll(e);
     }
 
-    private void AddInfo(string label, string value, ImageSource? icon = null, bool scrollable = false)
+    /// <summary>
+    /// The Source row, with its icon resolved off the UI thread on a cache miss. The resolve goes
+    /// through IShellItemImageFactory, and a cold hit there — a network exe, a packaged app the
+    /// shell has not cached — blocks for long enough to be felt on an arrow step, because this row
+    /// is rebuilt on every selection change. The slot is reserved so the value text does not shift
+    /// when the icon lands.
+    /// </summary>
+    private void AddSourceInfo(ClipboardHistoryItem item)
+    {
+        var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        if (SourceAppIcons.TryGetCached(item.SourceAppUserModelId, item.SourceApplicationPath, 16, dpiScale, out var cached))
+        {
+            // A cached null means the identity was already tried and has no icon; the row
+            // renders without one, as it always did.
+            AddInfo("Source", SourceDisplayName(item), cached);
+            return;
+        }
+
+        var image = AddInfo("Source", SourceDisplayName(item), icon: null, reserveIcon: true);
+        var id = item.Id;
+        SourceAppIcons.ResolveAsync(item.SourceAppUserModelId, item.SourceApplicationPath, 16, dpiScale, resolved =>
+        {
+            if (resolved is null)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                // The info panel is rebuilt per selection, so only paint if this row still
+                // belongs to the item that is selected by the time the icon arrives.
+                if (image is not null && _selected?.Id == id)
+                {
+                    image.Source = resolved;
+                }
+            }, System.Windows.Threading.DispatcherPriority.Background);
+        });
+    }
+
+    private WpfImage? AddInfo(string label, string value, ImageSource? icon = null, bool scrollable = false, bool reserveIcon = false)
     {
         var row = new Grid { MinHeight = 31 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
@@ -5021,9 +5062,10 @@ public partial class MainWindow : Window
         row.Children.Add(left);
 
         var valueHost = new DockPanel { LastChildFill = true, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
-        if (icon is not null)
+        WpfImage? image = null;
+        if (icon is not null || reserveIcon)
         {
-            var image = new WpfImage { Source = icon, Width = 16, Height = 16, Margin = new Thickness(0, 0, 7, 0), Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center };
+            image = new WpfImage { Source = icon, Width = 16, Height = 16, Margin = new Thickness(0, 0, 7, 0), Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(image, Dock.Left);
             valueHost.Children.Add(image);
         }
@@ -5046,7 +5088,18 @@ public partial class MainWindow : Window
 
         InfoHost.Children.Add(row);
         InfoHost.Children.Add(new Border { Height = 1, Background = (WpfBrush)FindResource("Line") });
+        return image;
     }
+
+    /// <summary>
+    /// The visible list exactly as the last render computed it. Arrow keys, digit paste and the
+    /// neighbour prefetch all fire per keystroke, and each used to re-run the whole filter chain
+    /// over the full history to answer a question the last render had already answered. The list
+    /// can only have drifted from the rows on screen if something marked the items dirty without
+    /// re-rendering — then fall back to filtering fresh, exactly what the callers did before.
+    /// </summary>
+    private IReadOnlyList<ClipboardHistoryItem> LastRenderedVisibleItems() =>
+        _renderedVisibleItems is not null && !_itemsDirtySinceRender ? _renderedVisibleItems : FilteredItems();
 
     private IReadOnlyList<ClipboardHistoryItem> FilteredItems()
     {
@@ -9489,7 +9542,7 @@ public partial class MainWindow : Window
         // Ctrl+1..9 pastes the Nth row without arrowing to it first.
         if (Keyboard.Modifiers == ModifierKeys.Control && DigitFromKey(e.Key) is int digit)
         {
-            var order = VisibleOrder(FilteredItems());
+            var order = VisibleOrder(LastRenderedVisibleItems());
             if (digit - 1 < order.Count)
             {
                 SelectItem(order[digit - 1], reason: "digit-paste");
@@ -9554,7 +9607,7 @@ public partial class MainWindow : Window
 
     private void MoveSelection(Key key)
     {
-        var order = VisibleOrder(FilteredItems());
+        var order = VisibleOrder(LastRenderedVisibleItems());
         if (order.Count == 0)
         {
             return;
@@ -10150,25 +10203,6 @@ public partial class MainWindow : Window
         {
             ShellLog.Error(ex, $"icon failed id={item.Id}");
             return BitmapFromDrawingImage(System.Drawing.SystemIcons.Application.ToBitmap());
-        }
-    }
-
-    private ImageSource? SourceIcon(ClipboardHistoryItem item) => SourceIcon(item, 16);
-
-    private ImageSource? SourceIcon(ClipboardHistoryItem item, int logicalSize)
-    {
-        try
-        {
-            return SourceAppIcons.Resolve(
-                item.SourceAppUserModelId,
-                item.SourceApplicationPath,
-                logicalSize,
-                VisualTreeHelper.GetDpi(this).DpiScaleX);
-        }
-        catch (Exception ex)
-        {
-            ShellLog.Error(ex, "source icon failed");
-            return null;
         }
     }
 
