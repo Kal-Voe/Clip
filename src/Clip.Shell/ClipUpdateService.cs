@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Clip.Core;
 
 namespace Clip.Shell;
 
@@ -112,27 +113,8 @@ internal sealed class ClipUpdateService
 
             ZipFile.ExtractToDirectory(path, extractFolder);
             var scriptPath = Path.Combine(Path.GetDirectoryName(path)!, "Install-ClipUpdate.ps1");
-            var script = $$"""
-$ErrorActionPreference = 'Stop'
-$source = '{{PowerShellString(extractFolder)}}'
-$target = '{{PowerShellString(installDirectory)}}'
-$pidToWait = {{processId}}
-Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue
-Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 500
-New-Item -ItemType Directory -Force -Path $target | Out-Null
-for ($attempt = 1; $attempt -le 3; $attempt++) {
-    try {
-        Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
-        break
-    } catch {
-        if ($attempt -eq 3) { throw }
-        Start-Sleep -Milliseconds 750
-    }
-}
-Start-Process -FilePath (Join-Path $target 'Clip.exe')
-""";
-            File.WriteAllText(scriptPath, script);
+            File.WriteAllText(scriptPath, BuildInstallScript(
+                extractFolder, installDirectory, processId, ClipStoragePaths.WebView2UserDataFolderPath));
             Process.Start(new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"")
             {
                 UseShellExecute = false,
@@ -148,6 +130,48 @@ Start-Process -FilePath (Join-Path $target 'Clip.exe')
             UseShellExecute = true,
         });
         return false;
+    }
+
+    /// <summary>
+    /// Builds the PowerShell that swaps the install in place after this process exits. The script
+    /// outlives the process that wrote it, so everything it needs is baked into the text here.
+    /// Split out from <see cref="LaunchInstaller"/> so tests can inspect the generated script
+    /// without spawning a real installer.
+    /// </summary>
+    internal static string BuildInstallScript(string extractFolder, string installDirectory, int processId, string webView2UserDataFolder)
+    {
+        return $$"""
+$ErrorActionPreference = 'Stop'
+$source = '{{PowerShellString(extractFolder)}}'
+$target = '{{PowerShellString(installDirectory)}}'
+$pidToWait = {{processId}}
+$webViewData = '{{PowerShellString(webView2UserDataFolder)}}'
+Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue
+# Clip's WebView2 children can outlive the shell for a moment and keep DLLs in the install
+# folder locked, so they have to go before the copy. But msedgewebview2.exe is shared
+# infrastructure - Outlook, Teams and Windows widgets all run under the same name - so kill
+# only the instances launched against Clip's own user-data-folder, which WebView2 always puts
+# on the child's command line.
+Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($webViewData, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 500
+New-Item -ItemType Directory -Force -Path $target | Out-Null
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+        Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
+        break
+    } catch {
+        if ($attempt -lt 3) { Start-Sleep -Milliseconds 750 }
+    }
+}
+# Relaunch whether the copy landed or not. A failed copy leaves the old (possibly partially
+# overwritten) install behind, and Clip dead-with-no-restart is strictly worse than Clip
+# running on a mixed install - the next update attempt repairs it. try/catch rather than
+# -ErrorAction: Start-Process throws a terminating error for a missing exe, and nothing is
+# left running to catch a throw from this script.
+try { Start-Process -FilePath (Join-Path $target 'Clip.exe') } catch { }
+""";
     }
 
     public static bool IsNewerVersion(string latest, string current)

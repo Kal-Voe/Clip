@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -174,5 +175,78 @@ public sealed class ClipUpdateServiceCoverageTests
         var missing = Path.Combine(Path.GetTempPath(), "Clip.Tests", $"{Guid.NewGuid():N}.exe");
 
         Assert.False(ClipUpdateService.LaunchInstaller(missing, Path.GetTempPath(), processId: 0));
+    }
+
+    [Fact]
+    public void InstallScriptKillsOnlyClipsOwnWebViewProcesses()
+    {
+        var script = ClipUpdateService.BuildInstallScript(
+            @"C:\extract",
+            @"C:\install",
+            processId: 42,
+            webView2UserDataFolder: @"C:\Users\o'brien\AppData\Local\Clip\WebView2");
+
+        // The old form was an unfiltered "Get-Process msedgewebview2 | Stop-Process" that took
+        // down Outlook/Teams/widgets webviews machine-wide. The kill must be scoped by Clip's
+        // own user-data-folder on the child's command line, with quotes in the path surviving
+        // the trip into single-quoted PowerShell.
+        Assert.DoesNotContain("Get-Process msedgewebview2", script);
+        Assert.Contains(@"$webViewData = 'C:\Users\o''brien\AppData\Local\Clip\WebView2'", script);
+        Assert.Contains("Get-CimInstance Win32_Process", script);
+        Assert.Contains("$_.CommandLine.IndexOf($webViewData", script);
+        Assert.Contains("Stop-Process -Id $_.ProcessId", script);
+        foreach (var line in script.Split('\n'))
+        {
+            if (line.Contains("Stop-Process"))
+            {
+                // Never a bare Stop-Process by name - only the filtered process ids.
+                Assert.Contains("-Id", line);
+            }
+        }
+    }
+
+    [Fact]
+    public void InstallScriptRelaunchesClipWhenEveryCopyAttemptFails()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "Clip.Tests", $"{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            // A pid that has already exited, so the script's Wait-Process returns immediately.
+            using var probe = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })!;
+            probe.WaitForExit();
+
+            var target = Path.Combine(root, "install");
+            var script = ClipUpdateService.BuildInstallScript(
+                Path.Combine(root, "missing-source"),
+                target,
+                probe.Id,
+                Path.Combine(root, "webview-data-that-matches-no-process"));
+            var scriptPath = Path.Combine(root, "Install-ClipUpdate.ps1");
+            File.WriteAllText(scriptPath, script);
+
+            using var powershell = Process.Start(new ProcessStartInfo(
+                "powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })!;
+
+            // The source folder never exists, so all three copy attempts fail. The old script
+            // threw at that point (exit 1) and left Clip dead with no restart; the fixed one
+            // must run to completion and reach the relaunch line - its try/catch swallows the
+            // missing Clip.exe here, so a clean exit proves the whole failure path.
+            Assert.True(powershell.WaitForExit(60_000), "install script did not finish");
+            Assert.Equal(0, powershell.ExitCode);
+            Assert.True(Directory.Exists(target));
+        }
+        finally
+        {
+            TestTemp.Delete(root);
+        }
     }
 }
