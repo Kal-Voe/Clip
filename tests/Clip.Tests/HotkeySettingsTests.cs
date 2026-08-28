@@ -66,4 +66,39 @@ public sealed class HotkeySettingsTests
         Assert.True(ClipHotkeyGesture.TryParseGlobal("Alt+V", out _));
         Assert.False(ClipHotkeyGesture.TryParseGlobal("V", out _));
     }
+
+    [Fact]
+    public void EscAliasParsesToEscape()
+    {
+        // The default CloseClip value is "Esc", which WPF's Key enum does not know — without
+        // the alias the close binding is dead on every install.
+        var parsed = ClipHotkeyGesture.TryParse("Esc", out var gesture);
+
+        Assert.True(parsed);
+        Assert.Equal(Key.Escape, gesture.WpfKey);
+        Assert.Equal("Esc", gesture.DisplayText);
+    }
+
+    [Fact]
+    public void DelAliasParsesToDelete()
+    {
+        var parsed = ClipHotkeyGesture.TryParse("del", out var gesture);
+
+        Assert.True(parsed);
+        Assert.Equal(Key.Delete, gesture.WpfKey);
+        Assert.Equal("Delete", gesture.DisplayText);
+    }
+
+    [Fact]
+    public void NormalizeKeepsDefaultCloseClipValue()
+    {
+        // Normalize snaps an unparseable value back to the default; "Esc" must parse and
+        // round-trip unchanged so existing settings.json files stay as they are.
+        var hotkeys = new ClipHotkeySettings();
+
+        hotkeys.Normalize();
+
+        Assert.Equal("Esc", hotkeys.CloseClip);
+        Assert.Equal("Delete", hotkeys.DeleteSelected);
+    }
 }

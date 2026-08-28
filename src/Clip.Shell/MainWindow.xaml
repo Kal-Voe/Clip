@@ -352,15 +352,29 @@
                 </Grid.ColumnDefinitions>
 
                 <Border Grid.Column="0" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0" ClipToBounds="True">
-                    <ScrollViewer x:Name="ListScroll"
-                                  VerticalScrollBarVisibility="Hidden"
-                                  HorizontalScrollBarVisibility="Disabled"
-                                  ClipToBounds="True"
-                                  Padding="0,0,0,8"
-                                  ScrollChanged="OnListScrollChanged"
-                                  PreviewMouseWheel="OnListWheel">
-                        <StackPanel x:Name="ItemsHost" ClipToBounds="True"/>
-                    </ScrollViewer>
+                    <Grid>
+                        <ScrollViewer x:Name="ListScroll"
+                                      VerticalScrollBarVisibility="Hidden"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      ClipToBounds="True"
+                                      Padding="0,0,0,8"
+                                      ScrollChanged="OnListScrollChanged"
+                                      PreviewMouseWheel="OnListWheel">
+                            <StackPanel x:Name="ItemsHost" ClipToBounds="True"/>
+                        </ScrollViewer>
+                        <!-- Shown by UpdateEmptyState when a render leaves no rows: a blank column
+                             next to a still-populated preview read as a bug, not as "no results". -->
+                        <TextBlock x:Name="EmptyStateText"
+                                   Visibility="Collapsed"
+                                   Foreground="{DynamicResource Muted}"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   MaxWidth="260"
+                                   Margin="24"/>
+                    </Grid>
                 </Border>
 
                 <Grid Grid.Column="1" Background="{DynamicResource Surface}">
@@ -451,28 +465,45 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <!-- Keycap texts are placeholders only: UpdateFooterHotkeyHints rewrites them
+                         from the live hotkey settings, so a rebound key never lies down here. -->
+                    <StackPanel x:Name="PasteHintPanel" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                         <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
-                            <TextBlock Text="Enter" Style="{StaticResource HotkeyText}"/>
+                            <TextBlock x:Name="PasteHintKey" Text="Enter" Style="{StaticResource HotkeyText}"/>
                         </Border>
                         <TextBlock Text="Paste" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <StackPanel x:Name="CopyHintPanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                         <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
-                            <TextBlock Text="Ctrl+C" Style="{StaticResource HotkeyText}"/>
+                            <TextBlock x:Name="CopyHintKey" Text="Ctrl+C" Style="{StaticResource HotkeyText}"/>
                         </Border>
                         <TextBlock Text="Copy" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel x:Name="ActionsHintPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                         <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
-                            <TextBlock Text="Ctrl+P" Style="{StaticResource HotkeyText}"/>
+                            <TextBlock x:Name="ActionsHintKey" Text="Ctrl+K" Style="{StaticResource HotkeyText}"/>
+                        </Border>
+                        <TextBlock Text="Actions" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
+                    </StackPanel>
+                    <StackPanel x:Name="PinHintPanel" Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
+                            <TextBlock x:Name="PinHintKey" Text="Ctrl+P" Style="{StaticResource HotkeyText}"/>
                         </Border>
                         <TextBlock Text="Pin" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
                     </StackPanel>
+                    <!-- Ctrl+Q is hardwired in OnWindowKeyDown, not a rebindable hotkey, so its cap is static. -->
+                    <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
+                            <TextBlock Text="Ctrl+Q" Style="{StaticResource HotkeyText}"/>
+                        </Border>
+                        <TextBlock Text="Shortcuts" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
+                    </StackPanel>
                     <Button x:Name="SettingsButton"
-                            Grid.Column="3"
+                            Grid.Column="5"
                             Style="{StaticResource IconButton}"
                             Click="OnSettingsClick"
                             ToolTip="Settings"

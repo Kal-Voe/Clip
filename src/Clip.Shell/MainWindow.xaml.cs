@@ -579,6 +579,19 @@ internal readonly record struct ClipHotkeyGesture(int WinModifiers, int VirtualK
             return true;
         }
 
+        // The defaults and every existing settings.json say "Esc", but WPF's Key enum only knows
+        // "Escape", so without this alias the whole close-palette binding silently never parsed.
+        // Aliasing here fixes installs in the field with no settings migration. "Del" likewise.
+        switch (text.ToUpperInvariant())
+        {
+            case "ESC":
+                key = Key.Escape;
+                return true;
+            case "DEL":
+                key = Key.Delete;
+                return true;
+        }
+
         return Enum.TryParse(text, ignoreCase: true, out key) && key is not Key.None;
     }
 
@@ -616,7 +629,40 @@ internal readonly record struct ClipHotkeyGesture(int WinModifiers, int VirtualK
             return ((int)(key - Key.D0)).ToString();
         }
 
+        // "Esc" is what keyboards print and what the default CloseClip value stores, so a
+        // parsed Escape must format back to "Esc" or Normalize would rewrite settings.
+        if (key == Key.Escape)
+        {
+            return "Esc";
+        }
+
         return key >= Key.A && key <= Key.Z ? key.ToString() : key.ToString();
+    }
+}
+
+/// <summary>
+/// Decides where the selection lands after a render changed what is visible — most often a
+/// search narrowing the list. A selection that is no longer on screen must not survive the
+/// render: Enter would paste the off-screen item while the preview shows it as if it matched.
+/// </summary>
+internal static class PaletteSelection
+{
+    /// <summary>
+    /// The item that should be selected after a render: the current selection while it is
+    /// still visible, otherwise the first visible item, and null when nothing is visible
+    /// (the caller clears the preview pane).
+    /// </summary>
+    public static ClipboardHistoryItem? Reconcile(string selectedId, IReadOnlyList<ClipboardHistoryItem> visibleItems)
+    {
+        foreach (var item in visibleItems)
+        {
+            if (item.Id == selectedId)
+            {
+                return item;
+            }
+        }
+
+        return visibleItems.Count > 0 ? visibleItems[0] : null;
     }
 }
 
@@ -747,6 +793,7 @@ public partial class MainWindow : Window
     private bool _openHotkeyRegistered;
     private bool _debugLogHotkeyRegistered;
     private bool _openHotkeyUnavailable;
+    private bool _openHotkeyConflictNotified;
     private bool _debugLogHotkeyUnavailable;
     private bool _openOverrideRegistered;
     private string? _activeOpenOverrideApp;
@@ -866,6 +913,7 @@ public partial class MainWindow : Window
         FaviconCache.Warm();
         _htmlPreviewIdleTimer.Tick += OnHtmlPreviewIdle;
         ApplyTheme(_settings.Theme, save: false);
+        UpdateFooterHotkeyHints();
         Opacity = 0;
         TitleText.Cursor = System.Windows.Input.Cursors.IBeam;
         TitleText.ToolTip = "Double-click to rename";
@@ -2245,6 +2293,16 @@ public partial class MainWindow : Window
             (_debugLogHotkeyUnavailable || _debugLogHotkeyRegistered))
         {
             _hotkeyRetryTimer.Stop();
+
+            // The retries are giving up for good: another app owns the gesture and waiting will
+            // not free it. Left silent, "Alt+V does nothing" is indistinguishable from Clip not
+            // running at all, so say so once via the tray balloon.
+            if (_openHotkeyUnavailable && !_openHotkeyConflictNotified)
+            {
+                _openHotkeyConflictNotified = true;
+                var gesture = string.IsNullOrWhiteSpace(_settings.Hotkeys.OpenClip) ? ClipHotkeyDefaults.OpenClip : _settings.Hotkeys.OpenClip;
+                UserNotificationRequested?.Invoke($"{gesture} is in use by another app — change Clip's hotkey in Settings");
+            }
         }
         else if (!_hotkeyRetryTimer.IsEnabled)
         {
@@ -2419,6 +2477,16 @@ public partial class MainWindow : Window
             if (_settings.Privacy.IsExcluded(source.Name, source.Path))
             {
                 ShellLog.Info($"clipboard skipped excluded source={source.Name} path={source.Path}");
+                return;
+            }
+
+            // Password managers flag transient secrets with dedicated clipboard formats; a copy
+            // carrying one must never land in history. Same shared check as the Watcher's path.
+            var dataObject = System.Windows.Clipboard.GetDataObject();
+            if (dataObject is not null &&
+                ClipboardPrivacyFormats.ShouldExcludeFromHistory(dataObject.GetDataPresent, dataObject.GetData))
+            {
+                ShellLog.Info($"clipboard skipped privacy format source={source.Name}");
                 return;
             }
 
@@ -3353,6 +3421,25 @@ public partial class MainWindow : Window
             QueueDeferredAppend();
         }
 
+        UpdateEmptyState(visibleItems.Count);
+
+        // Only reconcile an existing selection. When nothing is selected yet the choice belongs
+        // to SelectInitialItemIfNeeded, which defers the (expensive) first preview render so it
+        // cannot slow the palette's first paint.
+        if (selectedId is not null)
+        {
+            var reconciled = PaletteSelection.Reconcile(selectedId, visibleItems);
+            if (reconciled is null)
+            {
+                ClearSelection();
+            }
+            else if (reconciled.Id != selectedId)
+            {
+                _selectionIsAutomatic = true;
+                SelectItem(reconciled, reason: "reconcile");
+            }
+        }
+
         BenchMarks.Mark("rows-first");
         ShellLog.Info($"render items reason={reason} rows={_rows.Count}/{visibleItems.Count} selected={selectedId ?? "none"} elapsedMs={watch.ElapsedMilliseconds} deferred={nextIndex < entries.Count}");
         return visibleItems;
@@ -4091,7 +4178,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (reason != "initial")
+        // A reconcile is the list's choice, not the user's, so it must stay replaceable just
+        // like the initial selection (the caller sets _selectionIsAutomatic itself).
+        if (reason is not ("initial" or "reconcile"))
         {
             _selectionIsAutomatic = false;
         }
@@ -4133,6 +4222,45 @@ public partial class MainWindow : Window
         RenderPreview(item);
         PrefetchNeighbouringImages(item);
         ShellLog.Info($"selection changed reason={reason} id={item.Id} kind={item.Kind}");
+    }
+
+    /// <summary>
+    /// Returns the right-hand pane to its neutral "nothing selected" state. Used when a search
+    /// or filter leaves nothing visible: keeping the previous item's preview up would show an
+    /// answer that no longer matches the (empty) list, and Enter would paste it unseen.
+    /// </summary>
+    private void ClearSelection()
+    {
+        _selected = null;
+        _selectionIsAutomatic = false;
+        // Invalidate any in-flight preview render so it cannot repaint the pane after the clear.
+        _previewToken++;
+        _previewItemId = null;
+        _previewSourceStamp = null;
+        HidePreviews();
+        HeaderIcon.Source = null;
+        TitleText.Text = "Clipboard";
+        SubTitleText.Text = "Search, preview, and act on copied items";
+        OpenButton.Visibility = Visibility.Collapsed;
+        InfoHost.Children.Clear();
+        ShellLog.Info("selection cleared");
+    }
+
+    private void UpdateEmptyState(int visibleCount)
+    {
+        if (visibleCount > 0)
+        {
+            EmptyStateText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var query = SearchBox.Text;
+        EmptyStateText.Text = !string.IsNullOrWhiteSpace(query)
+            ? $"No matches for “{query.Trim()}”"
+            : _allItems.Count == 0
+                ? "Copy something to get started..."
+                : "Nothing matches this filter";
+        EmptyStateText.Visibility = Visibility.Visible;
     }
 
     /// <summary>The item the preview pane was last asked to show, for skipping redundant repeats.</summary>
@@ -4833,6 +4961,9 @@ public partial class MainWindow : Window
         if (_selected is null) return;
         var selected = ClipboardItemForPasteFormat(_selected);
         SetClipboard(selected, _settings.DefaultPasteFormat);
+        // Unlike paste, a copy leaves the palette up with nothing visibly changed, so it needs
+        // its own confirmation.
+        ShowToast("Copied");
         ShellLog.Info($"copy selected id={_selected.Id}");
     }
 
@@ -8326,8 +8457,28 @@ public partial class MainWindow : Window
         _settings.Hotkeys = hotkeys;
         _settings.Save();
         ReRegisterHotkeys("settings");
+        UpdateFooterHotkeyHints();
         ShellLog.Info($"hotkeys changed open={_settings.Hotkeys.OpenClip} debug={_settings.Hotkeys.SaveDebugLog}");
         ShowToast("Hotkeys updated");
+    }
+
+    /// <summary>
+    /// The footer keycaps advertise the palette's hotkeys, so they must follow rebinding
+    /// rather than hardcode the defaults ("Enter Paste" is a lie once Paste is Ctrl+Enter).
+    /// </summary>
+    private void UpdateFooterHotkeyHints()
+    {
+        SetFooterHint(PasteHintPanel, PasteHintKey, _settings.Hotkeys.PasteSelected);
+        SetFooterHint(CopyHintPanel, CopyHintKey, _settings.Hotkeys.CopySelected);
+        SetFooterHint(ActionsHintPanel, ActionsHintKey, _settings.Hotkeys.OpenActions);
+        SetFooterHint(PinHintPanel, PinHintKey, _settings.Hotkeys.PinSelected);
+    }
+
+    private static void SetFooterHint(StackPanel panel, TextBlock keycap, string gesture)
+    {
+        // An unbound hotkey has nothing to advertise; hide the hint rather than show an empty cap.
+        panel.Visibility = string.IsNullOrWhiteSpace(gesture) ? Visibility.Collapsed : Visibility.Visible;
+        keycap.Text = gesture;
     }
 
     private void ApplyPrivacy(ClipPrivacySettings privacy)
@@ -8391,6 +8542,7 @@ public partial class MainWindow : Window
         ApplyAppIcon(_settings.AppIcon, save: false);
         _store.SetContentRootPath(_settings.EffectiveClipboardFolderPath());
         ReRegisterHotkeys("settings-reset");
+        UpdateFooterHotkeyHints();
         var removed = _store.ApplyHistoryLimit(EffectiveHistoryLimit());
         _allItems = _store.QueryItemSummaries();
         _historySummariesPreloaded = true;
@@ -8423,6 +8575,8 @@ public partial class MainWindow : Window
             _openHotkeyRegistered = false;
         }
         _openHotkeyUnavailable = false;
+        // A rebind is a fresh start: if the new gesture also conflicts, that deserves its own balloon.
+        _openHotkeyConflictNotified = false;
 
         if (_debugLogHotkeyRegistered)
         {
