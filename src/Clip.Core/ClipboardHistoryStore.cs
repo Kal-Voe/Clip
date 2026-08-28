@@ -23,6 +23,11 @@ public sealed class ClipboardHistoryStore
     private const int TopSummaryTextCharacterLimit = 1_024;
     private const int TopSummaryIndexItemLimit = 64;
 
+    // Guards every read and write of history.json and the in-memory caches. Public mutators must
+    // hold it across their whole read+mutate+save: capture (thread pool), the OCR worker, and UI
+    // actions all write concurrently, and taking the lock separately for the read and the save
+    // let a slow writer overwrite a faster one's items with a stale snapshot. Monitor is
+    // re-entrant, so the nested GetItems/Save locks inside a locked mutator are free.
     private readonly object _sync = new();
     private readonly bool _enableLoadMaintenance;
     private readonly bool _retainLoadedItems;
@@ -78,6 +83,14 @@ public sealed class ClipboardHistoryStore
 
     public string HistoryKeyIndexFilePath { get; private set; }
 
+    /// <summary>
+    /// Set when a load found history.json unreadable and quarantined it: the path the bad file
+    /// was renamed to (history.json.corrupt-*), or the original path when even the rename failed
+    /// and the file had to be deleted. The Shell reads this after loading to toast once; the
+    /// store itself carries on from whatever the asset sidecars could rebuild.
+    /// </summary>
+    public string? QuarantinedHistoryPath { get; private set; }
+
     public IReadOnlyList<ClipboardHistoryItem> GetItems()
     {
         lock (_sync)
@@ -101,9 +114,26 @@ public sealed class ClipboardHistoryStore
                 return [];
             }
 
-            var json = File.ReadAllBytes(HistoryFilePath);
-            var items = JsonSerializer.Deserialize(json, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem) ?? [];
-            var changed = NormalizeLoadedItems(items);
+            List<ClipboardHistoryItem> items;
+            var changed = false;
+            try
+            {
+                var json = File.ReadAllBytes(HistoryFilePath);
+                items = JsonSerializer.Deserialize(json, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem) ?? [];
+            }
+            catch (JsonException)
+            {
+                // A crash mid-write (or a truncated/empty file) used to throw out of every load
+                // and silently kill capture forever - the palette kept rendering from the summary
+                // index, so everything looked fine while every save failed. Quarantine the bad
+                // file and rebuild what the asset sidecars can prove; changed forces the save
+                // below so history.json and the indexes agree again.
+                QuarantineCorruptHistory();
+                items = RebuildItemsFromSidecars();
+                changed = true;
+            }
+
+            changed |= NormalizeLoadedItems(items);
             if (_enableLoadMaintenance)
             {
                 changed |= ReconcileExternalAssetRenames(items);
@@ -324,6 +354,17 @@ public sealed class ClipboardHistoryStore
 
     private static IReadOnlyList<ClipboardHistoryItem>? QuerySummaryIndexBytes(byte[] json, string query, int limit)
     {
+        // The streaming reader checks one field at a time, which cannot express "every word
+        // matches somewhere in this object" without materializing it — multi-word queries return
+        // null so the caller falls back to the object path, and single-word queries scan with
+        // the trimmed token so both paths agree on surrounding whitespace.
+        var tokens = QueryTokens(query);
+        if (tokens.Length != 1)
+        {
+            return null;
+        }
+
+        query = tokens[0];
         try
         {
             var reader = new Utf8JsonReader(json);
@@ -509,12 +550,31 @@ public sealed class ClipboardHistoryStore
     private static byte ToLowerAscii(byte value) =>
         value is >= (byte)'A' and <= (byte)'Z' ? (byte)(value + 32) : value;
 
-    private static bool MatchesQuery(ClipboardHistoryItem item, string query) =>
-        Contains(item.Preview, query) ||
-        Contains(item.CustomTitle, query) ||
-        Contains(item.Text, query) ||
-        Contains(item.OcrText, query) ||
-        item.FilePaths.Any(path => Contains(path, query));
+    private static bool MatchesQuery(ClipboardHistoryItem item, string query)
+    {
+        // Token-AND: every whitespace-separated word must match some searchable field, in any
+        // order — "invoice pdf" finds an item titled "invoice" whose file path ends in ".pdf",
+        // where a single contiguous-substring match would find nothing.
+        foreach (var token in QueryTokens(query))
+        {
+            if (!MatchesToken(item, token))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool MatchesToken(ClipboardHistoryItem item, string token) =>
+        Contains(item.Preview, token) ||
+        Contains(item.CustomTitle, token) ||
+        Contains(item.Text, token) ||
+        Contains(item.OcrText, token) ||
+        item.FilePaths.Any(path => Contains(path, token));
+
+    private static string[] QueryTokens(string query) =>
+        query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
     private List<ClipboardHistoryItem> GetSummaryItems()
     {
@@ -666,28 +726,31 @@ public sealed class ClipboardHistoryStore
             return AddOrUpdateWithoutRetention(item, maxItems, refreshCopiedAt);
         }
 
-        Enrich(item, refreshCopiedAt);
-        PersistContentAsset(item);
-        var items = GetItems().ToList();
-        var duplicate = FindDuplicate(items, item);
-        if (duplicate is not null)
+        lock (_sync)
         {
-            var redundantAssetPath = RedundantAssetPath(item, duplicate);
-            ApplyDuplicateUpdate(duplicate, item);
-            TouchAsset(duplicate.AssetPath);
-            WriteSidecar(duplicate);
-            Save(items);
-            DeleteAssetPath(redundantAssetPath);
-            return duplicate;
-        }
+            Enrich(item, refreshCopiedAt);
+            PersistContentAsset(item);
+            var items = GetItems().ToList();
+            var duplicate = FindDuplicate(items, item);
+            if (duplicate is not null)
+            {
+                var redundantAssetPath = RedundantAssetPath(item, duplicate);
+                ApplyDuplicateUpdate(duplicate, item);
+                TouchAsset(duplicate.AssetPath);
+                WriteSidecar(duplicate);
+                Save(items);
+                DeleteAssetPath(redundantAssetPath);
+                return duplicate;
+            }
 
-        EnsureFriendlyAssetName(item, items);
-        WriteSidecar(item);
-        items.Insert(0, item);
-        var removed = TrimUnpinned(items, maxItems);
-        Save(items);
-        DeleteAssets(removed);
-        return item;
+            EnsureFriendlyAssetName(item, items);
+            WriteSidecar(item);
+            items.Insert(0, item);
+            var removed = TrimUnpinned(items, maxItems);
+            Save(items);
+            DeleteAssets(removed);
+            return item;
+        }
     }
 
     private ClipboardHistoryItem AddOrUpdateWithoutRetention(ClipboardHistoryItem item, int maxItems, bool refreshCopiedAt)
@@ -698,47 +761,66 @@ public sealed class ClipboardHistoryStore
             PersistContentAsset(item);
             EnsureFriendlyAssetName(item, []);
 
-            var keyItems = TryLoadCurrentKeyItems();
-            if (keyItems is not null)
+            try
             {
-                var keyDuplicateId = FindDuplicateId(keyItems, item);
-                if (keyDuplicateId is null && CanAppendWithoutTrim(keyItems, item, maxItems))
+                var keyItems = TryLoadCurrentKeyItems();
+                if (keyItems is not null)
                 {
-                    AppendNewWithoutRetention(keyItems, item);
+                    var keyDuplicateId = FindDuplicateId(keyItems, item);
+                    if (keyDuplicateId is null && CanAppendWithoutTrim(keyItems, item, maxItems))
+                    {
+                        AppendNewWithoutRetention(keyItems, item);
+                        return item;
+                    }
+                }
+
+                if (!File.Exists(HistoryFilePath) || new FileInfo(HistoryFilePath).Length == 0)
+                {
+                    SaveStoredCore([item]);
+                    QueueSidecarWrite(item);
+                    _itemsCache = null;
+                    _summaryItemsCache = null;
                     return item;
                 }
-            }
 
-            if (!File.Exists(HistoryFilePath) || new FileInfo(HistoryFilePath).Length == 0)
+                byte[]? json = null;
+                var duplicateId = keyItems is not null ? FindDuplicateId(keyItems, item) : null;
+                if (keyItems is null)
+                {
+                    duplicateId = TryFindDuplicateIdFromSummary(item, out var summaryDuplicateLookupCurrent);
+                    if (!summaryDuplicateLookupCurrent)
+                    {
+                        json = File.ReadAllBytes(HistoryFilePath);
+                        duplicateId = FindDuplicateIdInHistory(json, item);
+                    }
+                }
+
+                if (duplicateId is not null)
+                {
+                    json ??= File.ReadAllBytes(HistoryFilePath);
+                    return UpdateDuplicateWithoutRetention(json, item, duplicateId);
+                }
+
+                var keptUnpinnedIds = TryKeptUnpinnedIdsFromSummary(item, maxItems, out var summaryTrimCurrent);
+                json ??= File.ReadAllBytes(HistoryFilePath);
+                return AddNewWithoutRetention(json, item, maxItems, keptUnpinnedIds, summaryTrimCurrent);
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidDataException)
             {
-                SaveStoredCore([item]);
+                // The append fast path and the duplicate scan both parse history.json in place; a
+                // corrupt or truncated file used to throw the capture away entirely. Quarantine
+                // it and rebuild from the sidecars instead - the copy that just happened is the
+                // one thing that must never be lost.
+                QuarantineCorruptHistory();
+                var items = RebuildItemsFromSidecars();
+                items.RemoveAll(existing => existing.Id.Equals(item.Id, StringComparison.OrdinalIgnoreCase));
+                items.Insert(0, item);
+                SaveStoredCore(items);
                 QueueSidecarWrite(item);
                 _itemsCache = null;
                 _summaryItemsCache = null;
                 return item;
             }
-
-            byte[]? json = null;
-            var duplicateId = keyItems is not null ? FindDuplicateId(keyItems, item) : null;
-            if (keyItems is null)
-            {
-                duplicateId = TryFindDuplicateIdFromSummary(item, out var summaryDuplicateLookupCurrent);
-                if (!summaryDuplicateLookupCurrent)
-                {
-                    json = File.ReadAllBytes(HistoryFilePath);
-                    duplicateId = FindDuplicateIdInHistory(json, item);
-                }
-            }
-
-            if (duplicateId is not null)
-            {
-                json ??= File.ReadAllBytes(HistoryFilePath);
-                return UpdateDuplicateWithoutRetention(json, item, duplicateId);
-            }
-
-            var keptUnpinnedIds = TryKeptUnpinnedIdsFromSummary(item, maxItems, out var summaryTrimCurrent);
-            json ??= File.ReadAllBytes(HistoryFilePath);
-            return AddNewWithoutRetention(json, item, maxItems, keptUnpinnedIds, summaryTrimCurrent);
         }
     }
 
@@ -990,115 +1072,133 @@ public sealed class ClipboardHistoryStore
 
     public int ApplyHistoryLimit(int maxItems)
     {
-        var items = GetItems().ToList();
-        var before = items.Count;
-        var removed = TrimUnpinned(items, maxItems);
-        if (removed.Count == 0)
+        lock (_sync)
         {
-            return 0;
-        }
+            var items = GetItems().ToList();
+            var before = items.Count;
+            var removed = TrimUnpinned(items, maxItems);
+            if (removed.Count == 0)
+            {
+                return 0;
+            }
 
-        Save(items);
-        DeleteAssets(removed);
-        return before - items.Count;
+            Save(items);
+            DeleteAssets(removed);
+            return before - items.Count;
+        }
     }
 
     public bool Delete(string id)
     {
-        var items = GetItems().ToList();
-        var removedItems = items.Where(item => item.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (removedItems.Count > 0)
+        lock (_sync)
         {
-            items.RemoveAll(item => item.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
-            Save(items);
-            DeleteAssets(removedItems);
-        }
+            var items = GetItems().ToList();
+            var removedItems = items.Where(item => item.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (removedItems.Count > 0)
+            {
+                items.RemoveAll(item => item.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+                Save(items);
+                DeleteAssets(removedItems);
+            }
 
-        return removedItems.Count > 0;
+            return removedItems.Count > 0;
+        }
     }
 
     public int ClearHistory(bool includePinned)
     {
-        var items = GetItems().ToList();
-        var removed = items.Where(item => includePinned || !item.IsPinned).ToList();
-        if (removed.Count == 0)
+        lock (_sync)
         {
-            return 0;
-        }
+            var items = GetItems().ToList();
+            var removed = items.Where(item => includePinned || !item.IsPinned).ToList();
+            if (removed.Count == 0)
+            {
+                return 0;
+            }
 
-        items.RemoveAll(item => includePinned || !item.IsPinned);
-        Save(items);
-        DeleteAssets(removed);
-        return removed.Count;
+            items.RemoveAll(item => includePinned || !item.IsPinned);
+            Save(items);
+            DeleteAssets(removed);
+            return removed.Count;
+        }
     }
 
     public bool SetPinned(string id, bool isPinned)
     {
-        var items = GetItems().ToList();
-        var item = items.FirstOrDefault(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
-        if (item is null)
+        lock (_sync)
         {
-            return false;
-        }
+            var items = GetItems().ToList();
+            var item = items.FirstOrDefault(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            if (item is null)
+            {
+                return false;
+            }
 
-        item.IsPinned = isPinned;
-        if (isPinned && item.PinOrder <= 0)
-        {
-            item.PinOrder = items.Where(i => i.IsPinned).Select(i => i.PinOrder).DefaultIfEmpty(0).Max() + 1;
-        }
+            item.IsPinned = isPinned;
+            if (isPinned && item.PinOrder <= 0)
+            {
+                item.PinOrder = items.Where(i => i.IsPinned).Select(i => i.PinOrder).DefaultIfEmpty(0).Max() + 1;
+            }
 
-        if (!isPinned)
-        {
-            item.PinOrder = 0;
-            item.LastUsedAt = DateTimeOffset.Now;
-            item.LastCopiedAt = DateTimeOffset.Now;
-        }
+            if (!isPinned)
+            {
+                item.PinOrder = 0;
+                item.LastUsedAt = DateTimeOffset.Now;
+                item.LastCopiedAt = DateTimeOffset.Now;
+            }
 
-        Save(items);
-        return true;
+            Save(items);
+            return true;
+        }
     }
 
     public bool MovePinned(string id, int direction)
     {
-        var items = GetItems().ToList();
-        var pins = items.Where(i => i.IsPinned).OrderBy(i => i.PinOrder).ToList();
-        var index = pins.FindIndex(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
-        var target = index + Math.Sign(direction);
-        if (index < 0 || target < 0 || target >= pins.Count)
+        lock (_sync)
         {
-            return false;
-        }
+            var items = GetItems().ToList();
+            var pins = items.Where(i => i.IsPinned).OrderBy(i => i.PinOrder).ToList();
+            var index = pins.FindIndex(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            var target = index + Math.Sign(direction);
+            if (index < 0 || target < 0 || target >= pins.Count)
+            {
+                return false;
+            }
 
-        (pins[index].PinOrder, pins[target].PinOrder) = (pins[target].PinOrder, pins[index].PinOrder);
-        Save(items);
-        return true;
+            (pins[index].PinOrder, pins[target].PinOrder) = (pins[target].PinOrder, pins[index].PinOrder);
+            Save(items);
+            return true;
+        }
     }
 
     public bool EditText(string id, string text)
     {
-        var items = GetItems().ToList();
-        var item = items.FirstOrDefault(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
-        if (item is null || item.Kind != ClipboardItemKind.Text)
+        lock (_sync)
         {
-            return false;
-        }
+            var items = GetItems().ToList();
+            var item = items.FirstOrDefault(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            if (item is null || item.Kind != ClipboardItemKind.Text)
+            {
+                return false;
+            }
 
-        item.Text = text;
-        item.Preview = PreviewText(text);
-        item.LastUsedAt = DateTimeOffset.Now;
-        item.Kind = ClipboardItemKind.Text;
-        item.ContentHash = null;
-        item.HtmlText = null;
-        item.RtfText = null;
-        item.HasOriginalFormatting = false;
-        DeleteAssetPath(item.AssetPath);
-        item.AssetPath = null;
-        Enrich(item);
-        PersistContentAsset(item);
-        EnsureFriendlyAssetName(item, items);
-        WriteSidecar(item);
-        Save(items);
-        return true;
+            item.Text = text;
+            item.Preview = PreviewText(text);
+            item.LastUsedAt = DateTimeOffset.Now;
+            item.Kind = ClipboardItemKind.Text;
+            item.ContentHash = null;
+            item.HtmlText = null;
+            item.RtfText = null;
+            item.HasOriginalFormatting = false;
+            DeleteAssetPath(item.AssetPath);
+            item.AssetPath = null;
+            Enrich(item);
+            PersistContentAsset(item);
+            EnsureFriendlyAssetName(item, items);
+            WriteSidecar(item);
+            Save(items);
+            return true;
+        }
     }
 
     /// <summary>
@@ -1113,50 +1213,56 @@ public sealed class ClipboardHistoryStore
             return 0;
         }
 
-        var items = GetItems().ToList();
-        var updated = 0;
-        foreach (var item in items)
+        lock (_sync)
         {
-            if (!textById.TryGetValue(item.Id, out var text))
+            var items = GetItems().ToList();
+            var updated = 0;
+            foreach (var item in items)
             {
-                continue;
+                if (!textById.TryGetValue(item.Id, out var text))
+                {
+                    continue;
+                }
+
+                // Empty string, not null, when nothing was found — null means "not attempted yet"
+                // and would make the same image be scanned forever.
+                item.OcrText = text ?? string.Empty;
+                updated++;
             }
 
-            // Empty string, not null, when nothing was found — null means "not attempted yet"
-            // and would make the same image be scanned forever.
-            item.OcrText = text ?? string.Empty;
-            updated++;
-        }
+            if (updated > 0)
+            {
+                Save(items);
+            }
 
-        if (updated > 0)
-        {
-            Save(items);
+            return updated;
         }
-
-        return updated;
     }
 
     public bool Rename(string id, string? title)
     {
-        var items = GetItems().ToList();
-        var item = items.FirstOrDefault(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
-        if (item is null)
+        lock (_sync)
         {
-            return false;
-        }
+            var items = GetItems().ToList();
+            var item = items.FirstOrDefault(i => i.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            if (item is null)
+            {
+                return false;
+            }
 
-        var cleanTitle = string.IsNullOrWhiteSpace(title) ? null : title.Trim();
-        if (cleanTitle?.Length > 120)
-        {
-            cleanTitle = cleanTitle[..120];
-        }
+            var cleanTitle = string.IsNullOrWhiteSpace(title) ? null : title.Trim();
+            if (cleanTitle?.Length > 120)
+            {
+                cleanTitle = cleanTitle[..120];
+            }
 
-        item.CustomTitle = cleanTitle;
-        item.LastUsedAt = DateTimeOffset.Now;
-        RenameAssetForItem(item, items);
-        WriteSidecar(item);
-        Save(items);
-        return true;
+            item.CustomTitle = cleanTitle;
+            item.LastUsedAt = DateTimeOffset.Now;
+            RenameAssetForItem(item, items);
+            WriteSidecar(item);
+            Save(items);
+            return true;
+        }
     }
 
     public string SaveAsFile(string id, string? outputPath = null)
@@ -1195,7 +1301,7 @@ public sealed class ClipboardHistoryStore
         var list = items.ToList();
         var storedItems = list.Select(item => CreateStoredHistoryItem(item, compactText: false)).ToList();
         Directory.CreateDirectory(Path.GetDirectoryName(HistoryFilePath)!);
-        File.WriteAllBytes(HistoryFilePath, JsonSerializer.SerializeToUtf8Bytes(storedItems, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem));
+        WriteBytesAtomic(HistoryFilePath, JsonSerializer.SerializeToUtf8Bytes(storedItems, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem));
         var summaries = OrderedItems(CreateSummaryItems(list));
         SaveIndexCore(summaries);
         _summaryItemsCache = _retainLoadedItems ? summaries : null;
@@ -1425,7 +1531,7 @@ public sealed class ClipboardHistoryStore
     {
         Directory.CreateDirectory(Path.GetDirectoryName(HistoryIndexFilePath)!);
         var list = items.ToList();
-        File.WriteAllBytes(HistoryIndexFilePath, JsonSerializer.SerializeToUtf8Bytes(list, ClipboardHistorySummaryJsonContext.Default.ListClipboardHistoryItem));
+        WriteBytesAtomic(HistoryIndexFilePath, JsonSerializer.SerializeToUtf8Bytes(list, ClipboardHistorySummaryJsonContext.Default.ListClipboardHistoryItem));
         SaveKeyIndexCore(list);
         SaveTopIndexCore(list);
     }
@@ -1434,7 +1540,7 @@ public sealed class ClipboardHistoryStore
     {
         Directory.CreateDirectory(Path.GetDirectoryName(HistoryKeyIndexFilePath)!);
         var keys = items.Select(ClipboardHistoryKeyItem.From).ToList();
-        File.WriteAllBytes(HistoryKeyIndexFilePath, JsonSerializer.SerializeToUtf8Bytes(keys, ClipboardHistoryKeyJsonContext.Default.ListClipboardHistoryKeyItem));
+        WriteBytesAtomic(HistoryKeyIndexFilePath, JsonSerializer.SerializeToUtf8Bytes(keys, ClipboardHistoryKeyJsonContext.Default.ListClipboardHistoryKeyItem));
         _keyItemsCache = keys;
         _keyItemsCacheStampUtc = File.GetLastWriteTimeUtc(HistoryKeyIndexFilePath);
     }
@@ -1446,9 +1552,30 @@ public sealed class ClipboardHistoryStore
             .Take(TopSummaryIndexItemLimit)
             .Select(CreateTopSummaryItem)
             .ToList();
-        File.WriteAllBytes(HistoryTopIndexFilePath, JsonSerializer.SerializeToUtf8Bytes(topItems, ClipboardHistorySummaryJsonContext.Default.ListClipboardHistoryItem));
+        WriteBytesAtomic(HistoryTopIndexFilePath, JsonSerializer.SerializeToUtf8Bytes(topItems, ClipboardHistorySummaryJsonContext.Default.ListClipboardHistoryItem));
         _topSummaryItemsCache = topItems;
         _topSummaryItemsCacheStampUtc = File.GetLastWriteTimeUtc(HistoryTopIndexFilePath);
+    }
+
+    /// <summary>
+    /// Writes through a sibling temp file plus a rename, the same pattern SaveStoredCore streams
+    /// through, so a crash mid-write can never leave a half-written store file behind - the old
+    /// content survives on disk until the atomic Move replaces it.
+    /// </summary>
+    private static void WriteBytesAtomic(string path, byte[] bytes)
+    {
+        var tempPath = Path.Combine(
+            Path.GetDirectoryName(path)!,
+            $"{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllBytes(tempPath, bytes);
+            File.Move(tempPath, path, overwrite: true);
+        }
+        finally
+        {
+            DeleteTempHistoryFile(tempPath);
+        }
     }
 
     private static List<ClipboardHistoryItem> CreateSummaryItems(IEnumerable<ClipboardHistoryItem> items)
@@ -1548,20 +1675,23 @@ public sealed class ClipboardHistoryStore
             throw new ArgumentException("Clipboard folder path is required.", nameof(contentRootPath));
         }
 
-        var items = GetItems().ToList();
-        ContentRootPath = contentRootPath;
-        AssetPath = Path.Combine(ContentRootPath, "image");
-        HistoryFilePath = Path.Combine(ContentRootPath, "history.json");
-        HistoryIndexFilePath = Path.Combine(ContentRootPath, HistoryIndexFileName);
-        HistoryTopIndexFilePath = Path.Combine(ContentRootPath, HistoryTopIndexFileName);
-        HistoryKeyIndexFilePath = Path.Combine(ContentRootPath, HistoryKeyIndexFileName);
-        EnsureContentFolders();
-        BackfillContentAssets(items);
-        EnsureFriendlyAssetNames(items);
-        CleanupEmptyFileCategoryFolders();
-        SaveCore(items);
-        _itemsCache = _retainLoadedItems ? items : null;
-        _summaryItemsCache = _retainLoadedItems ? OrderedItems(CreateSummaryItems(items)) : null;
+        lock (_sync)
+        {
+            var items = GetItems().ToList();
+            ContentRootPath = contentRootPath;
+            AssetPath = Path.Combine(ContentRootPath, "image");
+            HistoryFilePath = Path.Combine(ContentRootPath, "history.json");
+            HistoryIndexFilePath = Path.Combine(ContentRootPath, HistoryIndexFileName);
+            HistoryTopIndexFilePath = Path.Combine(ContentRootPath, HistoryTopIndexFileName);
+            HistoryKeyIndexFilePath = Path.Combine(ContentRootPath, HistoryKeyIndexFileName);
+            EnsureContentFolders();
+            BackfillContentAssets(items);
+            EnsureFriendlyAssetNames(items);
+            CleanupEmptyFileCategoryFolders();
+            SaveCore(items);
+            _itemsCache = _retainLoadedItems ? items : null;
+            _summaryItemsCache = _retainLoadedItems ? OrderedItems(CreateSummaryItems(items)) : null;
+        }
     }
 
     private void ClearIndexCaches()
@@ -2760,6 +2890,108 @@ public sealed class ClipboardHistoryStore
             : sidecarPath;
     }
 
+    private void QuarantineCorruptHistory()
+    {
+        var backupPath = HistoryFilePath + $".corrupt-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}";
+        try
+        {
+            File.Move(HistoryFilePath, backupPath);
+            QuarantinedHistoryPath = backupPath;
+        }
+        catch
+        {
+            // The rename can lose to a scanner holding the file open. Deleting still unblocks
+            // future saves, and the caller rewrites history.json right after; the original path
+            // in the property tells the Shell recovery happened even without a backup.
+            try
+            {
+                File.Delete(HistoryFilePath);
+            }
+            catch
+            {
+            }
+
+            QuarantinedHistoryPath = HistoryFilePath;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the history list from the hidden per-asset sidecar files after history.json was
+    /// found unreadable. A sidecar only carries Id/Kind/ContentHash, but the asset file next to
+    /// it is the real payload, so everything except per-item metadata (pin state, copy counts,
+    /// custom titles) comes back rather than the user losing their whole history.
+    /// </summary>
+    private List<ClipboardHistoryItem> RebuildItemsFromSidecars()
+    {
+        var items = new List<ClipboardHistoryItem>();
+        if (!Directory.Exists(ContentRootPath))
+        {
+            return items;
+        }
+
+        var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sidecar in Directory.EnumerateFiles(ContentRootPath, "*" + SidecarExtension, SearchOption.AllDirectories))
+        {
+            var metadata = ReadSidecar(sidecar);
+            if (metadata is null ||
+                string.IsNullOrWhiteSpace(metadata.Id) ||
+                !seenIds.Add(metadata.Id) ||
+                !Enum.TryParse<ClipboardItemKind>(metadata.Kind, ignoreCase: true, out var kind))
+            {
+                continue;
+            }
+
+            var assetPath = AssetPathFromSidecarPath(sidecar);
+            var isFile = File.Exists(assetPath);
+            if (!isFile && !Directory.Exists(assetPath))
+            {
+                continue;
+            }
+
+            // The asset's write time stands in for the lost copy timestamps so the rebuilt list
+            // keeps a sensible recency order.
+            var stamp = new DateTimeOffset(isFile
+                ? File.GetLastWriteTime(assetPath)
+                : Directory.GetLastWriteTime(assetPath));
+            var item = new ClipboardHistoryItem
+            {
+                Id = metadata.Id,
+                Kind = kind,
+                ContentHash = metadata.ContentHash,
+                AssetPath = assetPath,
+                CreatedAt = stamp,
+                LastUsedAt = stamp,
+                FirstCopiedAt = stamp,
+                LastCopiedAt = stamp,
+            };
+
+            if (kind is ClipboardItemKind.Text or ClipboardItemKind.Link)
+            {
+                item.Text = ReadLinkAssetText(assetPath);
+                item.Preview = PreviewText(item.Text);
+            }
+            else if (kind == ClipboardItemKind.Color)
+            {
+                item.Text = Path.GetFileNameWithoutExtension(assetPath);
+                item.Preview = item.Text;
+            }
+            else if (kind == ClipboardItemKind.Files)
+            {
+                item.FilePaths = [assetPath];
+                item.Preview = Path.GetFileName(assetPath);
+            }
+            else
+            {
+                item.Preview = Path.GetFileNameWithoutExtension(assetPath);
+            }
+
+            items.Add(item);
+        }
+
+        items.Sort(CompareItems);
+        return items;
+    }
+
     private static void MoveSidecar(string oldAssetPath, string newAssetPath)
     {
         var oldSidecar = SidecarPathFor(oldAssetPath);
@@ -3121,7 +3353,7 @@ public sealed class ClipboardHistoryStore
 
         if (changed)
         {
-            File.WriteAllBytes(historyPath, JsonSerializer.SerializeToUtf8Bytes(items, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem));
+            WriteBytesAtomic(historyPath, JsonSerializer.SerializeToUtf8Bytes(items, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem));
         }
     }
 }

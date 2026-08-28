@@ -41,6 +41,64 @@ public sealed class ClipboardHistoryStoreTests : IDisposable
     }
 
     [Fact]
+    public void QueryItemsMatchesEveryWordAcrossDifferentFields()
+    {
+        var item = _store.AddOrUpdate(TextItem("quarterly numbers attached"));
+        _store.Rename(item.Id, "invoice");
+        _store.AddOrUpdate(TextItem("invoice reminder"));
+
+        // "quarterly" lives in the text, "invoice" only in the custom title - a
+        // contiguous-substring match would find nothing.
+        var items = _store.QueryItems("invoice quarterly").ToList();
+
+        Assert.Single(items);
+        Assert.Equal(item.Id, items[0].Id);
+    }
+
+    [Fact]
+    public void QueryItemsMultiWordIsOrderIndependent()
+    {
+        _store.AddOrUpdate(TextItem("alpha invoice pdf attached"));
+
+        Assert.Single(_store.QueryItems("pdf invoice"));
+        Assert.Single(_store.QueryItems("invoice pdf"));
+        Assert.Empty(_store.QueryItems("invoice missing"));
+    }
+
+    [Fact]
+    public void QueryItemsMultiWordIgnoresExtraWhitespace()
+    {
+        _store.AddOrUpdate(TextItem("alpha invoice pdf"));
+
+        Assert.Single(_store.QueryItems("  invoice \t pdf  "));
+    }
+
+    [Fact]
+    public void QueryItemsMultiWordMatchesUnicodeTokens()
+    {
+        _store.AddOrUpdate(TextItem("Привет aus der Straße"));
+
+        Assert.Single(_store.QueryItems("straße привет"));
+    }
+
+    [Fact]
+    public void QueryItemSummariesWithLimitMatchesMultiWordQueries()
+    {
+        var match = TextItem("beta invoice pdf");
+        var other = TextItem("beta proposal");
+        _store.Save([match, other]);
+
+        // Multi-word queries make the streaming index reader fall back to the object path;
+        // both must agree with QueryItems.
+        var summary = Assert.Single(_store.QueryItemSummaries("pdf invoice", 5));
+        Assert.Equal(match.Id, summary.Id);
+
+        // A trailing space must not defeat the single-word fast path either.
+        var padded = Assert.Single(_store.QueryItemSummaries("invoice ", 5));
+        Assert.Equal(match.Id, padded.Id);
+    }
+
+    [Fact]
     public void QueryItemSummariesKeepsSmallTextButStripsRichPayload()
     {
         var item = TextItem("alpha invoice");

@@ -175,13 +175,18 @@ public sealed class ClipboardHistoryStoreCoverageTests : IDisposable
     }
 
     [Fact]
-    public void NoRetainStoreThrowsWhenHistoryIsNotAJsonArray()
+    public void NoRetainStoreRecoversWhenHistoryIsNotAJsonArray()
     {
         var root = Sub("bad-history");
         var store = NoRetainStore(root);
         File.WriteAllText(store.HistoryFilePath, "{\"not\":\"an array\"}");
 
-        Assert.Throws<JsonException>(() => store.AddOrUpdate(TextItem("boom")));
+        // A malformed history file used to throw the capture away; now it is quarantined
+        // and the capture lands anyway.
+        var captured = store.AddOrUpdate(TextItem("boom"));
+
+        Assert.NotNull(store.QuarantinedHistoryPath);
+        Assert.Contains(store.GetItems(), item => item.Id == captured.Id);
     }
 
     [Fact]
@@ -200,7 +205,7 @@ public sealed class ClipboardHistoryStoreCoverageTests : IDisposable
     }
 
     [Fact]
-    public void AppendThrowsWhenHistoryTrailerIsNotAnArray()
+    public void AppendRecoversWhenHistoryTrailerIsNotAnArray()
     {
         var root = Sub("broken-trailer");
         var store = NoRetainStore(root);
@@ -211,11 +216,18 @@ public sealed class ClipboardHistoryStoreCoverageTests : IDisposable
         File.WriteAllText(store.HistoryFilePath, text.Remove(lastBracket, 1).Insert(lastBracket, " "));
         TouchIndexesNewerThanHistory(store);
 
-        Assert.Throws<InvalidDataException>(() => store.AddOrUpdate(TextItem("trailer two")));
+        // A broken trailer used to abort the append; now the file is quarantined and the
+        // new capture still lands. (Prior-item rebuild from sidecars is covered
+        // deterministically in ClipboardHistoryStoreRecoveryTests - the no-retain seed
+        // path queues its sidecar write on the thread pool, so asserting it here races.)
+        var captured = store.AddOrUpdate(TextItem("trailer two"));
+
+        Assert.NotNull(store.QuarantinedHistoryPath);
+        Assert.Contains(store.GetItems(), item => item.Id == captured.Id);
     }
 
     [Fact]
-    public void AppendThrowsWhenHistoryIsAllWhitespace()
+    public void AppendRecoversWhenHistoryIsAllWhitespace()
     {
         var root = Sub("empty-trailer");
         var store = NoRetainStore(root);
@@ -224,7 +236,10 @@ public sealed class ClipboardHistoryStoreCoverageTests : IDisposable
         File.WriteAllText(store.HistoryFilePath, "      ");
         TouchIndexesNewerThanHistory(store);
 
-        Assert.Throws<InvalidDataException>(() => store.AddOrUpdate(TextItem("blank two")));
+        var captured = store.AddOrUpdate(TextItem("blank two"));
+
+        Assert.NotNull(store.QuarantinedHistoryPath);
+        Assert.Contains(store.GetItems(), item => item.Id == captured.Id);
     }
 
     // ---------- top summary index maintenance ----------
