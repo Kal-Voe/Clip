@@ -805,7 +805,7 @@ public partial class MainWindow : Window
     private static readonly Dictionary<string, ImageSource> SvgImageCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, string> SvgTextCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object SvgCacheGate = new();
-    private static readonly Dictionary<string, ImageSource> RasterImageCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly RecentImageCache RasterImageCache = new(MaxCachedRasterImages);
     private static readonly object RasterImageCacheGate = new();
 
     // Kept apart from the row-icon cache because the sizes are nothing alike: a 48px icon is a few
@@ -813,7 +813,7 @@ public partial class MainWindow : Window
     // looked at are. Twelve covers stepping up and down a run of screenshots, which is the case
     // that used to decode from disk every single time.
     private const int MaxCachedPreviewImages = 12;
-    private static readonly Dictionary<string, ImageSource> PreviewImageCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly RecentImageCache PreviewImageCache = new(MaxCachedPreviewImages);
     private static System.Drawing.Rectangle _cachedMouseScreenWorkingArea;
     private static bool _hasCachedMouseScreenWorkingArea;
 
@@ -10371,7 +10371,7 @@ public partial class MainWindow : Window
         lock (RasterImageCacheGate)
         {
             var cache = IsPreviewSized(decodePixels) ? PreviewImageCache : RasterImageCache;
-            return cache.TryGetValue(cacheKey, out source!);
+            return cache.TryGet(cacheKey, out source);
         }
     }
 
@@ -10382,14 +10382,10 @@ public partial class MainWindow : Window
     {
         lock (RasterImageCacheGate)
         {
-            var preview = IsPreviewSized(decodePixels);
-            var cache = preview ? PreviewImageCache : RasterImageCache;
-            if (cache.Count >= (preview ? MaxCachedPreviewImages : MaxCachedRasterImages))
-            {
-                cache.Clear();
-            }
-
-            cache[cacheKey] = source;
+            // Remember evicts only its least recently used entry when full. This used to clear
+            // the whole cache instead, which erased the neighbour prefetch mid-arrow-run.
+            var cache = IsPreviewSized(decodePixels) ? PreviewImageCache : RasterImageCache;
+            cache.Remember(cacheKey, source);
         }
 
         return source;
