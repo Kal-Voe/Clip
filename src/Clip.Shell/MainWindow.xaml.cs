@@ -176,6 +176,16 @@ internal sealed class ClipShellSettings
 
             return settings;
         }
+        catch (JsonException ex)
+        {
+            // The file exists but does not parse — a truncated write or a hand-edit gone wrong.
+            // Falling back to defaults is right, but the next Save would then flatten those
+            // defaults over the user's only copy of their hotkeys and excluded apps. Park the
+            // unreadable bytes next door first so they stay recoverable.
+            var quarantined = Clip.Core.ClipSharedSettings.QuarantineCorruptSettings();
+            ShellLog.Error(ex, $"settings load failed, corrupt file quarantined to {quarantined ?? "nowhere"}");
+            return new ClipShellSettings();
+        }
         catch (Exception ex)
         {
             ShellLog.Error(ex, "settings load failed");
@@ -187,9 +197,11 @@ internal sealed class ClipShellSettings
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsPath, json);
+            // Atomic temp-file + rename: a crash mid-write must never leave a truncated
+            // settings.json, because a truncated file loads as defaults and the save after
+            // that wipes the user's real settings.
+            Clip.Core.ClipSharedSettings.WriteSettingsFileAtomic(json);
             ShellLog.Info($"settings saved path={SettingsPath} theme={Theme} appIcon={AppIcon} historyLimit={HistoryLimit?.ToString() ?? "Unlimited"} maxItemSize={ClipItemSizeLimit.MaxItemSizeLabel(MaxItemSizeBytes)} updateCheck={CheckForUpdatesOnStartup} autoInstall={InstallUpdatesAutomatically} clipboardFolder={EffectiveClipboardFolderPath()} openHotkey={Hotkeys.OpenClip} debugHotkey={Hotkeys.SaveDebugLog} excludedApps={Privacy.ExcludedApps.Count}");
         }
         catch (Exception ex)
@@ -14510,7 +14522,13 @@ internal static class ShellLog
     private static readonly object FileGate = new();
     private static readonly ConcurrentQueue<string> Pending = new();
     private static readonly AutoResetEvent Signal = new(false);
-    private static readonly string LogRoot = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Clip");
+    // CLIP_LOG_ROOT redirects logging the same way Clip.Watcher's LogRoot does, so the test
+    // suite's deliberate failure cases (corrupt settings, broken previews) don't write "error"
+    // lines into the real shell.log, where they read like production bugs in later triage.
+    private static readonly string LogRoot =
+        Environment.GetEnvironmentVariable("CLIP_LOG_ROOT") is { Length: > 0 } logRootOverride
+            ? logRootOverride
+            : System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Clip");
     public static readonly string Path = System.IO.Path.Combine(LogRoot, "shell.log");
     private static readonly string TempPath = System.IO.Path.Combine(LogRoot, "shell.log.tmp");
     private const long MaxLogBytes = 5L * 1024 * 1024;

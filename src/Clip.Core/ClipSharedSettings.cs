@@ -157,7 +157,79 @@ public static class ClipSharedSettings
         var path = ClipStoragePaths.SettingsPath;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var existing = File.Exists(path) ? File.ReadAllText(path) : "{}";
-        File.WriteAllText(path, updateJson(existing));
+
+        // A file that exists but does not parse would come out of the merge as just the one
+        // key being set here — the user's hotkeys, excluded apps and everything else silently
+        // gone. Park the unreadable bytes next door before writing anything over them.
+        if (!string.IsNullOrWhiteSpace(existing) && !IsParseableObject(existing))
+        {
+            QuarantineCorruptSettings();
+        }
+
+        WriteSettingsFileAtomic(updateJson(existing));
+    }
+
+    /// <summary>
+    /// Writes settings.json through a temp file + rename so a crash mid-write can never leave
+    /// a truncated file behind. A truncated settings.json is worse than it looks: every loader
+    /// falls back to defaults, and the next save then flattens those defaults over the user's
+    /// real settings. Shared by every settings writer — this class and the Shell's
+    /// ClipShellSettings.Save — so the file on disk is always either the old version or the
+    /// new one, never half of one.
+    /// </summary>
+    public static void WriteSettingsFileAtomic(string json)
+    {
+        var path = ClipStoragePaths.SettingsPath;
+        var directory = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $"settings.{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(tempPath, json);
+        File.Move(tempPath, path, overwrite: true);
+    }
+
+    /// <summary>
+    /// Moves an unreadable settings.json aside as settings.json.corrupt-* and returns the new
+    /// path (null when there was nothing to move or the move failed). Loaders call this when
+    /// the file exists but does not parse: falling back to defaults is right, but the defaults
+    /// will be saved sooner or later, and that save must not overwrite the user's only copy of
+    /// their settings — quarantining keeps the bytes recoverable next to the fresh file.
+    /// </summary>
+    public static string? QuarantineCorruptSettings()
+    {
+        var path = ClipStoragePaths.SettingsPath;
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        // Guid rather than a timestamp: the shell's load and the watcher's tray toggle can trip
+        // over the same corrupt file at the same moment, and the second move must not throw.
+        var quarantinePath = $"{path}.corrupt-{Guid.NewGuid():N}";
+        try
+        {
+            File.Move(path, quarantinePath);
+            return quarantinePath;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsParseableObject(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(json) is JsonObject;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static ClipSharedSettingsSnapshot DefaultSnapshot() =>
