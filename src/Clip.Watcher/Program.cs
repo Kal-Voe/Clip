@@ -1769,6 +1769,17 @@ internal sealed class ClipboardWatcherForm : Form
     /// </summary>
     private bool CaptureCurrentClipboard()
     {
+        // The Shell registers its own clipboard listener and declares itself sole capture
+        // owner while it runs; if the watcher captures too, both processes race read-modify-
+        // write on history.json with only in-process locks. Yield whenever the shell's
+        // single-instance mutex exists — TryOpenExisting is a single cheap kernel call, so
+        // checking per capture beats caching a staleness window.
+        if (Program.IsRichPaletteRunning())
+        {
+            Program.LogTrace("Clipboard capture skipped shell owns capture");
+            return true;
+        }
+
         var captureWatch = Stopwatch.StartNew();
         WatcherSettings settings;
         (string? Name, string? Path) source;
@@ -1856,6 +1867,15 @@ internal sealed class ClipboardWatcherForm : Form
         var data = Clipboard.GetDataObject();
         if (data is null)
         {
+            return null;
+        }
+
+        // Password managers flag transient secrets with dedicated clipboard formats; a copy
+        // carrying one must never land in history. Checked here (not before the retry loop)
+        // because the formats are only visible once the clipboard is actually readable.
+        if (ClipboardPrivacyFormats.ShouldExcludeFromHistory(data.GetDataPresent, data.GetData))
+        {
+            Program.LogDebug($"Clipboard skipped privacy format source={sourceName}");
             return null;
         }
 
