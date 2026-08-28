@@ -4523,11 +4523,24 @@ public partial class MainWindow : Window
     /// navigation actually completed and was revealed; a failed or superseded one leaves it hidden
     /// and this returns false.
     /// </summary>
-    private bool PreviewAlreadyShowing(ClipboardHistoryItem item) =>
-        _previewItemId == item.Id &&
-        _previewSourceStamp is not null &&
-        _previewSourceStamp == SourceStampOf(item) &&
-        _htmlPreview is Microsoft.Web.WebView2.Wpf.WebView2 { CoreWebView2: not null, Visibility: Visibility.Visible };
+    private bool PreviewAlreadyShowing(ClipboardHistoryItem item)
+    {
+        try
+        {
+            return _previewItemId == item.Id &&
+                _previewSourceStamp is not null &&
+                _previewSourceStamp == SourceStampOf(item) &&
+                _htmlPreview is Microsoft.Web.WebView2.Wpf.WebView2 { CoreWebView2: not null, Visibility: Visibility.Visible };
+        }
+        catch (Exception ex)
+        {
+            // The CoreWebView2 getter rethrows whatever failed during initialization, so a browser
+            // that never came up must read as "not showing" — this check sits on the open path,
+            // and letting it throw took the whole palette down with it.
+            ShellLog.Error(ex, "preview-already-showing check failed");
+            return false;
+        }
+    }
 
     private void RenderPreview(ClipboardHistoryItem item)
     {
@@ -9338,8 +9351,13 @@ public partial class MainWindow : Window
         return brightness > 150;
     }
 
+    // Flattened to opaque because both callers feed WebView2's DefaultBackgroundColor, which
+    // accepts only fully transparent or fully opaque — the acrylic theme's semi-transparent
+    // Surface (alpha 0xCC) made the setter throw ArgumentException, which faulted the WebView2
+    // init and then crashed every palette open that touched CoreWebView2. The pages the pane
+    // loads paint their own opaque Surface anyway, so nothing is lost visually.
     private static System.Drawing.Color ToDrawingColor(SolidColorBrush brush) =>
-        System.Drawing.Color.FromArgb(brush.Color.A, brush.Color.R, brush.Color.G, brush.Color.B);
+        System.Drawing.Color.FromArgb(255, brush.Color.R, brush.Color.G, brush.Color.B);
 
     internal static ClipThemePreference NextThemeTogglePreference(ClipThemePreference current, bool systemIsDark)
     {
