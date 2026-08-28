@@ -119,7 +119,12 @@ public sealed class ClipboardHistoryStore
             try
             {
                 var json = File.ReadAllBytes(HistoryFilePath);
-                items = JsonSerializer.Deserialize(json, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem) ?? [];
+                // A literal JSON "null" deserializes cleanly to null — coalescing it to an empty
+                // list here would silently discard the whole history without ever quarantining
+                // the file. The store never writes "null", so treat it as the corruption it is
+                // and let the recovery below rebuild from the sidecars.
+                items = JsonSerializer.Deserialize(json, ClipboardHistoryJsonContext.Default.ListClipboardHistoryItem)
+                    ?? throw new JsonException("history.json holds JSON null, not an item array.");
             }
             catch (JsonException)
             {
@@ -2892,7 +2897,17 @@ public sealed class ClipboardHistoryStore
 
     private void QuarantineCorruptHistory()
     {
-        var backupPath = HistoryFilePath + $".corrupt-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}";
+        // The millisecond timestamp is not unique enough on its own: two quarantines inside the
+        // same tick (a corrupt load followed by an immediately re-corrupted save, or rapid
+        // retries) would Move onto the existing backup, throw, and fall into the delete branch
+        // below — losing the evidence file. Bump a counter until the name is free.
+        var basePath = HistoryFilePath + $".corrupt-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}";
+        var backupPath = basePath;
+        for (var attempt = 2; File.Exists(backupPath); attempt++)
+        {
+            backupPath = $"{basePath}-{attempt}";
+        }
+
         try
         {
             File.Move(HistoryFilePath, backupPath);
