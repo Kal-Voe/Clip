@@ -1,7 +1,82 @@
 # Clip — handoff
 
-_Last updated 2026-08-18. **`main` is the trunk.** All work pushed, and **installed** — the copy in
+_Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
+
+## Audit implemented end to end (2026-08-28, 19 commits, released v1.2.0)
+
+Isaiah: "Start fixing/implementing... test as if you're trying to break it... don't stop until
+it's done." A 10-agent workflow implemented every finding from `.claudehelper/AUDIT-2026-08-28.md`
+(see the section below for the audit itself). Test suite grew 887 → **1044**, all green in Release.
+Landed, in order: store hardening (atomic saves, corrupt-history quarantine + sidecar rebuild,
+mutation lock, token-AND multi-word search) · updater WebView2 kill scoped to Clip's own children +
+relaunch-on-failure · password-manager exclusion formats honored in both capture paths (shared
+helper in Clip.Core) + watcher yields capture to the shell · Esc/Del hotkey aliases + selection
+follows search + copy toast + hotkey-failure notification + footer hints + empty states · full
+keyboard nav (arrows/Page/Home/End), Ctrl+1..9 quick paste, action-menu keyboard support, delete
+undo (Ctrl+Z), pause-capture toggle · **crisp text (TextFormattingMode=Display), PerMonitorV2 DPI
+manifest, acrylic glass backdrop (DWMWA_SYSTEMBACKDROP_TYPE=3, settings toggle, opaque fallback)**,
+constant selection border (no jiggle), rasterized search icon · perf: LRU cache eviction,
+off-thread row thumbnails, per-keystroke list reuse, conceal-time row/preview reclamation · two
+adversarial agents added edge-case tests and fixed real bugs they exposed (WebView2 rejects
+semi-transparent DefaultBackgroundColor — flattened at ToDrawingColor; unicode install paths;
+same-ms quarantine collisions; corrupt settings no longer silently wipe ExcludedApps).
+
+Shipped: published 1.2.0 locally, installed over `%APPDATA%\Programs\Clip`, restarted via
+"Clip Autostart" task, smoke-verified the palette opens/renders (screenshot), pushed to main,
+tagged v1.2.0 (release.yml builds installer + zips on tag).
+
+### Next steps
+
+1. Isaiah eyeballs the things only a human can judge: acrylic glass look (Settings has a
+   "Translucent background" toggle), text crispness in Display mode, per-monitor DPI on the
+   second monitor, selection highlight (no jiggle), keyboard-nav feel, empty states.
+2. Not done, deliberately: bundling Inter/JetBrains Mono font files (needs a download decision);
+   font stacks still name them and fall back to Segoe UI Variable / Cascadia on machines without.
+
+## Full improvement audit + asyar rendering audit (2026-08-28, no code changes)
+
+Isaiah asked for an audit-only pass: find improvements (styling, usability, features, stability,
+performance) and have an agent audit https://github.com/Xoshbin/asyar to explain why it renders
+crisper and how it does its translucent background. Six parallel auditors ran; full ranked report
+with file:line evidence is in `.claudehelper/AUDIT-2026-08-28.md`.
+
+Headlines: Esc is provably dead (default "Esc" gesture never parses — needs "Escape" alias in
+`TryKey`); there is no arrow-key list navigation at all; Enter can paste a stale item filtered out
+by search; capture ignores the password-manager clipboard exclusion formats (privacy hole, ~10
+lines to fix in both capture paths); the crispness gap vs asyar/Raycast is WPF's
+`Ideal`+`Grayscale` text mode (switch to `Display` at window level) plus missing PerMonitorV2 DPI
+manifest; history.json writes are non-atomic with no corruption recovery and racing writers; the
+updater force-kills every WebView2 process on the machine. Acrylic/mica is viable today via
+`DWMWA_SYSTEMBACKDROP_TYPE` because the window is already non-layered + DWM-rounded — never use
+`AllowsTransparency` (kills backdrops and ClearType). asyar = Tauri 2 + Svelte in the OS webview,
+transparency via the `window-vibrancy` crate (HudWindow material on macOS, acrylic→mica on Windows).
+
+### Next steps
+
+1. Isaiah picks what to act on from `AUDIT-2026-08-28.md`. Suggested first batch (all small):
+   Esc alias, selection-follows-search, `Display` text mode, PMv2 manifest, exclusion formats,
+   atomic saves + corruption quarantine, multi-word search, copy toast, selection-border jiggle.
+2. The acrylic look: backdrop Option A + brush alpha in `ApplyTheme` + bundle Inter — after the
+   text/DPI fixes so glass and crispness are judged together.
+
+## Split-pill filters always show their rectangle (2026-08-28, commit 87631f1, released v1.1.14)
+
+Isaiah wanted the button+dropdown filter pills (All, Media, File) to always show the full
+rectangle outline, not just when selected — unselected they collapsed to a bare divider.
+One change in `SetFilterVisual` (MainWindow.xaml.cs): unselected shells now get a `Line2`
+border instead of transparent; selected look unchanged (Selected fill + SelectedBorder).
+XAML defaults for `MediaFilterShell`/`FilesFilterShell` updated to match so there's no
+flash of borderless pills before the first `UpdateFilterVisuals` pass.
+
+887 tests pass. Published locally as 1.1.14+87631f1, installed over `%APPDATA%\Programs\Clip`,
+restarted via "Clip Autostart" task. Pushed to `main`. Released as v1.1.14 (tag on 87631f1,
+CI green, installer + both zips attached, marked Latest).
+
+### Next steps
+
+1. Isaiah verifies: open Clip — all three dropdown pills (All, Media, File) show a full
+   rectangle outline even when unselected; selected pill still gets the filled look.
 
 ## Clicking off the palette took two clicks (2026-08-18, commit f4e95c0, released v1.1.10)
 
