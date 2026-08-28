@@ -3,6 +3,25 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## The glass corners showed two arcs (2026-08-28, released v1.2.1)
+
+Isaiah, on the v1.2.0 palette: "the corners look bad." Magnified pixel capture of the live window
+confirmed two nested corner arcs: DWM clips the window at its own DWMWCP_ROUND radius (8 DIP) while
+the Shell border painted a 14px radius inside it. That mismatch existed before the acrylic work but
+was invisible — the opaque window background painted out to the window edge, so only DWM's 8px
+silhouette ever showed. Making the background transparent for the backdrop exposed both at once,
+plus a bright halo where raw backdrop sat in the gap between the arcs.
+
+There is no API to widen DWM's radius (only AllowsTransparency or SetWindowRgn, both of which
+forfeit the backdrop), so the content matches the clip instead: `Shell.CornerRadius` is now 8, which
+is also what the Windows 11 flyouts use. `MainWindow.ShellCornerRadius` holds the value for the
+fullscreen-exit restore, and a test parses MainWindow.xaml and asserts the literal still matches the
+constant — the two live in different files and would otherwise drift straight back into this bug.
+
+1045 tests green. Verified against the running app by capturing the palette's corner pixels before
+and after (DPI-aware capture; the palette opens on the cursor's monitor, so pin the cursor to the
+primary screen first or the grab comes back black).
+
 ## Audit implemented end to end (2026-08-28, 19 commits, released v1.2.0)
 
 Isaiah: "Start fixing/implementing... test as if you're trying to break it... don't stop until

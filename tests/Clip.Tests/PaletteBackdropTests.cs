@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Clip.Shell;
 
 namespace Clip.Tests;
@@ -54,6 +56,41 @@ public sealed class PaletteBackdropTests
         var settings = JsonSerializer.Deserialize<ClipShellSettings>("{}");
         Assert.NotNull(settings);
         Assert.True(settings!.TranslucentBackground);
+    }
+
+    [Fact]
+    public void ShellCornerRadiusMatchesTheXamlThatActuallyPaintsIt()
+    {
+        // The glass backdrop makes the window background transparent, so DWM's clip and the Shell
+        // border's fill are both visible and any disagreement shows as two nested arcs per corner.
+        // The constant and the XAML literal are edited in different files; this is what keeps a
+        // change to one from silently re-opening that bug.
+        var xaml = File.ReadAllText(RepoPath("src", "Clip.Shell", "MainWindow.xaml"));
+        var shell = xaml.IndexOf("x:Name=\"Shell\"", StringComparison.Ordinal);
+        Assert.True(shell >= 0, "MainWindow.xaml no longer declares a Border named Shell.");
+
+        var match = Regex.Match(xaml[shell..], "CornerRadius=\"(?<radius>[0-9.]+)\"");
+        Assert.True(match.Success, "The Shell border no longer sets a uniform CornerRadius.");
+        Assert.Equal(
+            MainWindow.ShellCornerRadius,
+            double.Parse(match.Groups["radius"].Value, CultureInfo.InvariantCulture));
+    }
+
+    private static string RepoPath(params string[] parts)
+    {
+        var directory = AppContext.BaseDirectory;
+        while (!string.IsNullOrWhiteSpace(directory))
+        {
+            var candidate = Path.Combine(new[] { directory }.Concat(parts).ToArray());
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new FileNotFoundException($"Could not find {Path.Combine(parts)} above {AppContext.BaseDirectory}.");
     }
 
     [Fact]

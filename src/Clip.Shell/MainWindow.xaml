@@ -258,8 +258,14 @@
         </Style>
     </Window.Resources>
 
+    <!-- 8 is DWM's own DWMWCP_ROUND radius, and DWM is what actually clips the window. While the
+         palette was opaque its background painted to the window edge and this radius never showed,
+         so it could be anything; with the glass backdrop the window background is transparent and
+         both silhouettes are visible at once — a 14px fill inside an 8px clip reads as two
+         mismatched arcs at every corner. There is no API to widen DWM's radius, so the content
+         matches it instead, which is also what the Windows 11 flyouts do. -->
     <Border x:Name="Shell"
-            CornerRadius="14"
+            CornerRadius="8"
             Background="{DynamicResource Bg}"
             UseLayoutRounding="True"
             SnapsToDevicePixels="True"

@@ -7462,7 +7462,7 @@ public partial class MainWindow : Window
         Height = _preFullScreenHeight;
         Left = _preFullScreenLeft;
         Top = _preFullScreenTop;
-        Shell.CornerRadius = new CornerRadius(14);
+        Shell.CornerRadius = new CornerRadius(ShellCornerRadius);
         SetChromeVisibleForFullScreen(true);
         ShellLog.Info("media fullscreen exited");
     }
@@ -11150,6 +11150,14 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern int GetWindowTextLength(IntPtr hWnd);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
+
+    /// <summary>
+    /// Must stay equal to the radius DWMWCP_ROUND gives the window below, and to the Shell
+    /// border's CornerRadius in XAML. DWM clips the window; the Shell paints the surface. With
+    /// the glass backdrop on, the window background is transparent, so a content radius that
+    /// disagrees with the clip shows up as two nested arcs in every corner.
+    /// </summary>
+    internal const double ShellCornerRadius = 8;
 
     internal static void ApplyRoundedWindowCorners(IntPtr hwnd)
     {
