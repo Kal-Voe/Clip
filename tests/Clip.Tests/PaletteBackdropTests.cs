@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Media;
 using Clip.Shell;
 
 namespace Clip.Tests;
@@ -19,14 +21,66 @@ public sealed class PaletteBackdropTests
     }
 
     [Theory]
-    [InlineData("Bg", "#1A1A1A", "#CC1A1A1A")]
-    [InlineData("Bg", "#F7F7F7", "#CCF7F7F7")]
-    [InlineData("Surface", "#212121", "#E6212121")]
-    [InlineData("Surface2", "#272727", "#E6272727")]
-    [InlineData("Surface3", "#323232", "#E6323232")]
+    [InlineData("Bg", "#1A1A1A", "#A61A1A1A")]
+    [InlineData("Bg", "#F7F7F7", "#A6F7F7F7")]
+    [InlineData("Surface", "#212121", "#5C212121")]
+    [InlineData("Surface2", "#272727", "#5C272727")]
+    [InlineData("Surface3", "#323232", "#5C323232")]
     public void GlassHexBlendsBackgroundAndSurfaceBrushes(string key, string hex, string expected)
     {
         Assert.Equal(expected, PaletteBackdrop.GlassHex(key, hex));
+    }
+
+    [Fact]
+    public void GlassHexKeepsAZoneWellShortOfOpaqueOnceItIsStackedOnTheSheet()
+    {
+        // The Surface family is never seen on its own: it is always painted over the Bg sheet, so
+        // what the eye gets is 1-(1-aBg)*(1-aSurface). The palette read solid at CC/E6 because that
+        // product was 98%. This is the guard on the whole point of the change — the composite has
+        // to stay in the band where the desktop still blurs through but 13px text is comfortable.
+        var bg = int.Parse(PaletteBackdrop.GlassHex("Bg", "#1A1A1A")[1..3], NumberStyles.HexNumber) / 255.0;
+        var surface = int.Parse(PaletteBackdrop.GlassHex("Surface", "#212121")[1..3], NumberStyles.HexNumber) / 255.0;
+        var zone = 1 - ((1 - bg) * (1 - surface));
+
+        Assert.InRange(bg, 0.60, 0.70);
+        Assert.InRange(zone, 0.75, 0.80);
+    }
+
+    [Fact]
+    public void OpaqueDropsTheGlassAlphaAndKeepsTheColor()
+    {
+        var glass = (SolidColorBrush)PaletteBackdrop.Opaque(new SolidColorBrush(Color.FromArgb(0x5C, 0x21, 0x21, 0x21)));
+        Assert.Equal(Color.FromRgb(0x21, 0x21, 0x21), glass.Color);
+        Assert.True(glass.IsFrozen);
+    }
+
+    [Fact]
+    public void OpaqueLeavesAnAlreadyOpaqueBrushAlone()
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(0x21, 0x21, 0x21));
+        Assert.Same(brush, PaletteBackdrop.Opaque(brush));
+    }
+
+    [Theory]
+    [InlineData(800, 520, 8, 8)]
+    [InlineData(800, 520, 0, 0)]     // fullscreen and expanded-image flatten the radius to 0
+    [InlineData(10, 800, 8, 5)]      // never more than half the shorter side
+    public void ShellClipGeometryRoundsToTheShellRadius(double width, double height, double radius, double expected)
+    {
+        var clip = MainWindow.ShellClipGeometry(width, height, radius);
+        Assert.NotNull(clip);
+        Assert.Equal(new Rect(0, 0, width, height), clip!.Rect);
+        Assert.Equal(expected, clip.RadiusX);
+        Assert.Equal(expected, clip.RadiusY);
+    }
+
+    [Theory]
+    [InlineData(0, 520)]
+    [InlineData(800, 0)]
+    [InlineData(double.NaN, 520)]
+    public void ShellClipGeometryRefusesToBlankTheWindowBeforeItHasASize(double width, double height)
+    {
+        Assert.Null(MainWindow.ShellClipGeometry(width, height, 8));
     }
 
     [Theory]
@@ -45,7 +99,7 @@ public sealed class PaletteBackdropTests
     [Fact]
     public void GlassHexPassesThroughValuesThatAlreadyCarryAlpha()
     {
-        Assert.Equal("#CC1A1A1A", PaletteBackdrop.GlassHex("Bg", "#CC1A1A1A"));
+        Assert.Equal("#A61A1A1A", PaletteBackdrop.GlassHex("Bg", "#A61A1A1A"));
     }
 
     [Fact]

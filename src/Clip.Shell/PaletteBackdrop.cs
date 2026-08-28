@@ -1,4 +1,9 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
+// Aliased rather than `using System.Windows.Media`: System.Drawing is in scope project-wide and
+// brings its own Brush and Color, so the bare names are ambiguous. Same aliases as MainWindow.
+using WpfBrush = System.Windows.Media.Brush;
+using WpfColor = System.Windows.Media.Color;
+using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
 
 namespace Clip.Shell;
 
@@ -82,11 +87,21 @@ internal static class PaletteBackdrop
     }
 
     /// <summary>
-    /// Alpha per brush while glass is on. Bg is the big sheet the blur reads through; the Surface
-    /// brushes back the panels text actually sits on, so they stay closer to opaque — ClearType
-    /// cannot do subpixel over true transparency, and greyscale text needs the contrast. Lines,
-    /// text and selection chrome stay fully opaque. Anything that is not a plain #RRGGBB (already
-    /// carries alpha, named color) passes through untouched.
+    /// The one rule the whole glass look rests on: <b>the Shell is the single sheet of glass, and
+    /// everything layered on it is a relative tint, never a restatement of the base color.</b>
+    ///
+    /// Bg is that sheet. The Surface family is not a second sheet — it is the wash that separates
+    /// the list column from the preview column from the footer, and it is always painted on top of
+    /// the Bg sheet, so its alpha compounds: a zone's real opacity is 1-(1-aBg)*(1-aSurface). With
+    /// the old CC/E6 pair that came out at 1-0.20*0.10 = 98%, which is why the palette read solid
+    /// no matter how good the acrylic behind it was. A6 over 5C lands at 1-0.349*0.639 = 78%, and
+    /// the bare sheet (header, and anything that correctly paints nothing of its own) at 65%.
+    ///
+    /// Anything a zone tint would make illegible gets its own stronger treatment at its own call
+    /// site — see <see cref="Opaque"/> — rather than dragging these two numbers back up.
+    ///
+    /// Lines, text and selection chrome stay fully opaque. Anything that is not a plain #RRGGBB
+    /// (already carries alpha, named color) passes through untouched.
     /// </summary>
     internal static string GlassHex(string key, string hex)
     {
@@ -97,9 +112,27 @@ internal static class PaletteBackdrop
 
         return key switch
         {
-            "Bg" => "#CC" + hex[1..],
-            "Surface" or "Surface2" or "Surface3" => "#E6" + hex[1..],
+            "Bg" => "#A6" + hex[1..],
+            "Surface" or "Surface2" or "Surface3" => "#5C" + hex[1..],
             _ => hex,
         };
+    }
+
+    /// <summary>
+    /// Strips the glass alpha back off a themed brush. Only the palette has the DWM acrylic behind
+    /// it; a Popup and an owned window are each their own HWND, so a zone tint there is not glass —
+    /// it is a menu you can read the list rows through, or a Window.Background washed out against
+    /// whatever the compositor happens to clear the frame to. Those surfaces opt out here.
+    /// </summary>
+    internal static WpfBrush Opaque(WpfBrush brush)
+    {
+        if (brush is not WpfSolidColorBrush solid || solid.Color.A == 255)
+        {
+            return brush;
+        }
+
+        var opaque = new WpfSolidColorBrush(WpfColor.FromRgb(solid.Color.R, solid.Color.G, solid.Color.B));
+        opaque.Freeze();
+        return opaque;
     }
 }

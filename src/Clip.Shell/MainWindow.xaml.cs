@@ -6309,7 +6309,9 @@ public partial class MainWindow : Window
             }
         };
 
-        var grid = new Grid { Background = background };
+        // No background of its own: the panel border already paints Bg, and a second Bg layer on
+        // top of it doubles the glass tint into a square-cornered block inside the rounded card.
+        var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(60) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -6497,7 +6499,9 @@ public partial class MainWindow : Window
             }
         };
 
-        var grid = new Grid { Background = background, Margin = new Thickness(18, 16, 18, 18) };
+        // Same rule as the palette header: the panel border already paints Bg, so painting it again
+        // inside the margin stacks a second glass layer and shows up as an inset block.
+        var grid = new Grid { Margin = new Thickness(18, 16, 18, 18) };
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -6816,9 +6820,10 @@ public partial class MainWindow : Window
         Grid.SetRow(searchShell, 1);
         shell.Children.Add(searchShell);
 
+        // Bg again would be a third layer over the panel's Bg over the Shell's Bg; the panel is the
+        // card, this is just where the list lives inside it.
         var appHost = new Border
         {
-            Background = background,
             Margin = new Thickness(12, 0, 8, 0),
             Child = OpenWithOverlayRow("Loading apps...", "Use Browse if the app is not listed.", foreground, muted),
         };
@@ -6878,7 +6883,7 @@ public partial class MainWindow : Window
         {
             appList = new WpfListBox
             {
-                Background = background,
+                Background = WpfBrushes.Transparent,
                 Foreground = foreground,
                 BorderThickness = new Thickness(0),
                 ItemContainerStyle = PaletteListItemStyle((WpfBrush)FindResource("AccentSoft"), (WpfBrush)FindResource("Selected")),
@@ -7442,6 +7447,7 @@ public partial class MainWindow : Window
             Width = screen.Bounds.Width / dpi.DpiScaleX;
             Height = screen.Bounds.Height / dpi.DpiScaleY;
             Shell.CornerRadius = new CornerRadius(0);
+            UpdateShellClip();
 
             // Fullscreen means the video fills the screen, not the whole app blown up. Everything
             // except the preview surface is collapsed so only the player is left.
@@ -7463,6 +7469,7 @@ public partial class MainWindow : Window
         Left = _preFullScreenLeft;
         Top = _preFullScreenTop;
         Shell.CornerRadius = new CornerRadius(ShellCornerRadius);
+        UpdateShellClip();
         SetChromeVisibleForFullScreen(true);
         ShellLog.Info("media fullscreen exited");
     }
@@ -7990,6 +7997,7 @@ public partial class MainWindow : Window
         Width = bottomRight.X - topLeft.X;
         Height = bottomRight.Y - topLeft.Y;
         Shell.CornerRadius = new CornerRadius(0);
+        UpdateShellClip();
         UpdateLayout();
     }
 
@@ -8005,6 +8013,7 @@ public partial class MainWindow : Window
         Width = _expandedRestoreBounds.Width;
         Height = _expandedRestoreBounds.Height;
         Shell.CornerRadius = _expandedRestoreCornerRadius;
+        UpdateShellClip();
         _expandedWindowResized = false;
         UpdateLayout();
     }
@@ -9070,6 +9079,13 @@ public partial class MainWindow : Window
         {
             SearchShell.BorderBrush = (WpfBrush)FindResource("Line2");
         }
+
+        // The action menus live in Popups, which are separate HWNDs floating over the palette: no
+        // acrylic under them, and whatever they cover is list rows and preview text. At the zone
+        // alpha you would read that text straight through the menu, so menus opt out of the glass.
+        var menuSurface = PaletteBackdrop.Opaque((WpfBrush)FindResource("Surface"));
+        if (ActionMenuBorder is not null) { ActionMenuBorder.Background = menuSurface; }
+        if (ShareSubmenuBorder is not null) { ShareSubmenuBorder.Background = menuSurface; }
         if (TitleText is not null) { TitleText.Foreground = (WpfBrush)FindResource("Text"); }
         if (SubTitleText is not null) { SubTitleText.Foreground = (WpfBrush)FindResource("Muted"); }
         if (save)
@@ -11159,6 +11175,37 @@ public partial class MainWindow : Window
     /// </summary>
     internal const double ShellCornerRadius = 8;
 
+    /// <summary>
+    /// The rounded clip the Shell needs in addition to ClipToBounds. Border.ClipToBounds clips to
+    /// the bounds *rectangle*, not to the CornerRadius, so any child that paints its own background
+    /// paints square into all four corners. Today DWM's window clip hides that, which makes it a
+    /// trap rather than a visible bug — the moment a child extends past the window it would show.
+    /// Returns null when the size is not renderable yet: an empty clip blanks the whole palette.
+    /// </summary>
+    internal static RectangleGeometry? ShellClipGeometry(double width, double height, double radius)
+    {
+        if (double.IsNaN(width) || double.IsNaN(height) || width <= 0 || height <= 0)
+        {
+            return null;
+        }
+
+        // A radius past half the shorter side has no meaning as a corner; Border clamps the same way.
+        var corner = Math.Clamp(radius, 0, Math.Min(width, height) / 2);
+        var clip = new RectangleGeometry(new Rect(0, 0, width, height), corner, corner);
+        clip.Freeze();
+        return clip;
+    }
+
+    /// <summary>
+    /// Re-cuts the Shell's rounded clip. Must run after anything that changes the Shell's size or
+    /// its CornerRadius — the fullscreen and expanded-image paths flatten the radius to 0, and a
+    /// clip left rounded there would shave the corners off a full-screen video.
+    /// </summary>
+    private void UpdateShellClip() =>
+        Shell.Clip = ShellClipGeometry(Shell.ActualWidth, Shell.ActualHeight, Shell.CornerRadius.TopLeft);
+
+    private void OnShellSizeChanged(object sender, SizeChangedEventArgs e) => UpdateShellClip();
+
     internal static void ApplyRoundedWindowCorners(IntPtr hwnd)
     {
         try
@@ -11267,7 +11314,9 @@ internal sealed class HotkeyHelpWindow : Window
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
-        Background = bg;
+        // Opaque: this window is its own HWND with no acrylic behind it, so the glass alpha
+        // would only wash the color out against whatever the compositor clears the frame to.
+        Background = PaletteBackdrop.Opaque(bg);
         SourceInitialized += (_, _) => MainWindow.ApplyRoundedWindowCorners(new WindowInteropHelper(this).Handle);
         KeyDown += (_, e) =>
         {
@@ -11428,7 +11477,7 @@ internal sealed class OpenWithWindow : Window
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
-        Background = bg;
+        Background = PaletteBackdrop.Opaque(bg);
         SourceInitialized += (_, _) => MainWindow.ApplyRoundedWindowCorners(new WindowInteropHelper(this).Handle);
         KeyDown += OnKeyDown;
 
@@ -11864,7 +11913,7 @@ internal sealed class ExcludedAppPickerWindow : Window
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
-        Background = bg;
+        Background = PaletteBackdrop.Opaque(bg);
         SourceInitialized += (_, _) => MainWindow.ApplyRoundedWindowCorners(new WindowInteropHelper(this).Handle);
         KeyDown += OnKeyDown;
 
@@ -12335,7 +12384,7 @@ internal sealed class SettingsWindow : Window
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.Manual;
         ShowInTaskbar = false;
-        Background = _bg;
+        Background = PaletteBackdrop.Opaque(_bg);
         SourceInitialized += (_, _) => MainWindow.ApplyRoundedWindowCorners(new WindowInteropHelper(this).Handle);
         Loaded += (_, _) => CenterOnCursorScreen();
         KeyDown += (_, e) =>
@@ -12600,7 +12649,7 @@ internal sealed class SettingsWindow : Window
     private void RefreshTheme(bool rebuildPage = true)
     {
         ApplyPalette(_paletteOverride ?? _paletteProvider());
-        Background = _bg;
+        Background = PaletteBackdrop.Opaque(_bg);
         if (_root is not null)
         {
             _root.Background = _bg;
@@ -12883,7 +12932,7 @@ internal sealed class SettingsWindow : Window
 
         var border = new Border
         {
-            Background = _surface,
+            Background = PaletteBackdrop.Opaque(_surface),
             BorderBrush = _line,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
@@ -13858,7 +13907,7 @@ internal sealed class SettingsWindow : Window
             AllowsTransparency = true,
             Child = new Border
             {
-                Background = _surface,
+                Background = PaletteBackdrop.Opaque(_surface),
                 BorderBrush = _line,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
@@ -14319,7 +14368,7 @@ internal sealed class SettingsWindow : Window
             AllowsTransparency = true,
             Child = new Border
             {
-                Background = _surface,
+                Background = PaletteBackdrop.Opaque(_surface),
                 BorderBrush = _line,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
@@ -14713,7 +14762,7 @@ internal sealed class RenameWindow : Window
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = background;
+        Background = PaletteBackdrop.Opaque(background);
         Foreground = foreground;
         ShowInTaskbar = false;
         SourceInitialized += (_, _) => MainWindow.ApplyRoundedWindowCorners(new WindowInteropHelper(this).Handle);
@@ -14844,7 +14893,7 @@ internal sealed class TextEditWindow : Window
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = background;
+        Background = PaletteBackdrop.Opaque(background);
         Foreground = foreground;
         ShowInTaskbar = false;
         UseLayoutRounding = true;

@@ -272,7 +272,8 @@
             TextOptions.TextFormattingMode="Display"
             TextOptions.TextRenderingMode="Grayscale"
             TextOptions.TextHintingMode="Auto"
-            ClipToBounds="True">
+            ClipToBounds="True"
+            SizeChanged="OnShellSizeChanged">
         <Grid x:Name="RootGrid">
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="SearchRowDef" Height="53"/>
@@ -280,7 +281,12 @@
                 <RowDefinition x:Name="FooterRowDef" Height="34"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Background="{DynamicResource Bg}" Margin="12,10" MouseLeftButtonDown="OnChromeMouseDown">
+            <!-- Transparent, never Bg: the Shell below already paints the Bg sheet, so painting it
+                 again here stacked a second 65% layer inset by the margin and squared off at the
+                 corners — the "dark rectangle behind the controls". Transparent and not null on
+                 purpose: a null Background is not hit-testable, and OnChromeMouseDown is what drags
+                 the window. Do not "tidy" this back to a brush. -->
+            <Grid Grid.Row="0" Background="Transparent" Margin="12,10" MouseLeftButtonDown="OnChromeMouseDown">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -451,7 +457,12 @@
                         </Border>
                     </Grid>
 
-                    <Border Grid.Row="1" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Background="{DynamicResource Surface}">
+                    <!-- No Background: the preview column above already carries the Surface tint and
+                         restating it here would double it, so the information panel would read as a
+                         darker block inside its own column. The 1px top Line is the divider.
+                         Transparent rather than null so the panel still hit-tests and the wheel
+                         keeps reaching InfoScroll. -->
+                    <Border Grid.Row="1" Background="Transparent" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0">
                         <Grid Margin="24,12,24,14">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -551,7 +562,10 @@
             </Popup>
 
             <Popup x:Name="ShareSubmenuPopup" AllowsTransparency="True" Placement="Right" StaysOpen="False">
-                <Border Background="{DynamicResource Surface}"
+                <!-- Surface here is only the starting color; ApplyTheme re-paints both menu borders
+                     opaque, because a Popup is its own window with no acrylic under it. -->
+                <Border x:Name="ShareSubmenuBorder"
+                        Background="{DynamicResource Surface}"
                         CornerRadius="8"
                         Padding="4"
                         MinWidth="178"
