@@ -4,6 +4,7 @@ internal enum WatcherTrayAction
 {
     OpenClip,
     PasteLatest,
+    TogglePauseCapture,
     CheckForUpdates,
     SaveLogSnapshot,
     OpenSettings,
@@ -18,6 +19,7 @@ internal static class WatcherTrayMenu
     [
         new(WatcherTrayAction.OpenClip, "Open Clip"),
         new(WatcherTrayAction.PasteLatest, "Paste latest item"),
+        new(WatcherTrayAction.TogglePauseCapture, "Pause capture"),
         new(WatcherTrayAction.CheckForUpdates, "Check for updates"),
         new(WatcherTrayAction.SaveLogSnapshot, "Save log snapshot"),
         new(WatcherTrayAction.OpenSettings, "Settings"),

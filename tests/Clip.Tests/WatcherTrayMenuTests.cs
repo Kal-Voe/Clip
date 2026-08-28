@@ -11,6 +11,7 @@ public sealed class WatcherTrayMenuTests
 
         Assert.Contains(items, item => item.Action == WatcherTrayAction.OpenClip && item.Label == "Open Clip");
         Assert.Contains(items, item => item.Action == WatcherTrayAction.PasteLatest && item.Label == "Paste latest item");
+        Assert.Contains(items, item => item.Action == WatcherTrayAction.TogglePauseCapture && item.Label == "Pause capture");
         Assert.Contains(items, item => item.Action == WatcherTrayAction.CheckForUpdates && item.Label == "Check for updates");
         Assert.Contains(items, item => item.Action == WatcherTrayAction.SaveLogSnapshot && item.Label == "Save log snapshot");
         Assert.Contains(items, item => item.Action == WatcherTrayAction.OpenSettings && item.Label == "Settings");

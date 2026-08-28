@@ -81,6 +81,13 @@ internal sealed class ClipShellSettings
     /// <summary>Show the source app on a second line under each list item.</summary>
     public bool ShowSourceAppInList { get; set; } = true;
 
+    /// <summary>
+    /// Capture switched off entirely. Toggled from the watcher's tray menu (another process),
+    /// so the live value is read from disk at each capture; this property exists so a settings
+    /// save from this process round-trips the key instead of silently dropping it.
+    /// </summary>
+    public bool CapturePaused { get; set; }
+
     public string? ClipboardFolderPath { get; set; }
     public ClipHotkeySettings Hotkeys { get; set; } = new();
     public ClipPrivacySettings Privacy { get; set; } = new();
@@ -111,6 +118,7 @@ internal sealed class ClipShellSettings
         InstallUpdatesAutomatically = true;
         ExtractTextFromImages = false;
         ShowSourceAppInList = true;
+        CapturePaused = false;
         ClipboardFolderPath = null;
         Hotkeys = new ClipHotkeySettings();
         Hotkeys.ResetToDefaults();
@@ -664,6 +672,45 @@ internal static class PaletteSelection
 
         return visibleItems.Count > 0 ? visibleItems[0] : null;
     }
+
+    /// <summary>
+    /// How many rows PageUp/PageDown jump. The list shows roughly this many rows per screen;
+    /// close enough that a page feels like a page without measuring the viewport.
+    /// </summary>
+    public const int PageStep = 8;
+
+    /// <summary>
+    /// The item <paramref name="delta"/> rows away from the current selection in the on-screen
+    /// order, clamped to the ends of the list. With no current selection any movement lands on
+    /// the first item — arrowing into an unselected list should start at the top, not guess.
+    /// Home/End are just deltas of ±Count. Null only when nothing is visible.
+    /// </summary>
+    public static ClipboardHistoryItem? Step(IReadOnlyList<ClipboardHistoryItem> visibleOrder, string? selectedId, int delta)
+    {
+        if (visibleOrder.Count == 0)
+        {
+            return null;
+        }
+
+        var index = -1;
+        for (var i = 0; i < visibleOrder.Count; i++)
+        {
+            if (visibleOrder[i].Id == selectedId)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if (index < 0)
+        {
+            return visibleOrder[0];
+        }
+
+        // long, so End's +Count on a huge list cannot overflow past the clamp.
+        var next = Math.Clamp((long)index + delta, 0, visibleOrder.Count - 1);
+        return visibleOrder[(int)next];
+    }
 }
 
 
@@ -771,6 +818,7 @@ public partial class MainWindow : Window
     private readonly List<Task> _clipboardPersistTasks = [];
     private readonly ClipUpdateService _updates = new();
     private readonly Dictionary<string, Border> _rows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DeletedItemUndoBuffer _deleteUndo = new();
     private static readonly TimeSpan DefaultToastDuration = TimeSpan.FromSeconds(2.4);
     private readonly System.Windows.Threading.DispatcherTimer _toastTimer = new() { Interval = DefaultToastDuration };
     private readonly System.Windows.Threading.DispatcherTimer _hotkeyRetryTimer = new() { Interval = TimeSpan.FromSeconds(2) };
@@ -835,6 +883,10 @@ public partial class MainWindow : Window
     private bool _returnFocusCommitsPasteWithEnter;
     private bool _returnFocusCouldNeedNoActivate;
     private ClipboardHistoryItem? _menuItem;
+
+    /// <summary>The action menu's actionable rows in display order, so arrow keys can walk them.</summary>
+    private readonly List<(Border Row, MenuAction Action)> _menuRows = [];
+    private int _menuHighlightIndex = -1;
     private bool _expandedImagePanning;
     private System.Windows.Point _expandedImageLastPoint;
     private System.Windows.Point _expandedImageDownPoint;
@@ -1240,6 +1292,7 @@ public partial class MainWindow : Window
         BenchMarks.Mark("positioned");
         EnsureAppHeaderIcon();
         EnsureChromeIcons();
+        RefreshCapturePausedBadge();
         BenchMarks.Mark("chrome-icons");
 
         // Fill the list before the window is allowed to be seen. Showing first and loading after
@@ -2472,6 +2525,15 @@ public partial class MainWindow : Window
     private void ReadAndCaptureClipboard()
     {
         {
+            // Paused is a cross-process switch the tray can flip at any moment, so it is read
+            // from disk here rather than trusted to the settings loaded at startup. A capture
+            // is a rare event; the file read costs nothing that matters.
+            if (RefreshCapturePaused())
+            {
+                ShellLog.Info("clipboard skipped capture paused");
+                return;
+            }
+
             ClipboardHistoryItem? item = null;
             var source = ForegroundSource();
             if (_settings.Privacy.IsExcluded(source.Name, source.Path))
@@ -3445,6 +3507,16 @@ public partial class MainWindow : Window
         return visibleItems;
     }
 
+    /// <summary>
+    /// The items in the order the list actually shows them: pinned first, then the date groups.
+    /// This is NOT FilteredItems' order — keyboard navigation and Ctrl+digit indexing must walk
+    /// the rows the user sees, or "the third item" pastes something other than the third row.
+    /// </summary>
+    internal static List<ClipboardHistoryItem> VisibleOrder(IReadOnlyList<ClipboardHistoryItem> filteredItems)
+    {
+        return GroupItems(filteredItems).SelectMany(group => group.Items).ToList();
+    }
+
     private static List<(string? Header, ClipboardHistoryItem? Item)> RenderEntries(IReadOnlyList<ClipboardHistoryItem> visibleItems)
     {
         var entries = new List<(string? Header, ClipboardHistoryItem? Item)>();
@@ -3897,7 +3969,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShowActionMenu(ClipboardHistoryItem item)
+    private void ShowActionMenu(ClipboardHistoryItem item, UIElement? target = null)
     {
         _menuItem = item;
         var actions = new List<MenuAction>
@@ -3965,12 +4037,14 @@ public partial class MainWindow : Window
         actions.Add(MenuAction.Submenu("Share", shareActions));
         actions.Add(new MenuAction("Save as File...", () => SaveItem(item)));
         actions.Add(new MenuAction("Delete", () => DeleteItem(item), true, danger: true, shortcut: "Del"));
-        ShowStyledMenu(actions, null);
+        ShowStyledMenu(actions, target);
     }
 
     private void ShowStyledMenu(IEnumerable<MenuAction> actions, UIElement? target)
     {
         ActionMenuHost.Children.Clear();
+        _menuRows.Clear();
+        _menuHighlightIndex = -1;
         ShareSubmenuPopup.IsOpen = false;
         // Menu builders append separators per section; when a section contributes nothing the
         // separators land back to back, so consecutive (and leading) ones collapse here.
@@ -4042,10 +4116,13 @@ public partial class MainWindow : Window
             row.Child = grid;
             if (action.Enabled)
             {
+                // Hover and arrow keys share one highlight, or the menu shows two "current"
+                // rows the moment a mouse user touches the keyboard.
+                var menuIndex = _menuRows.Count;
+                _menuRows.Add((row, action));
                 row.MouseEnter += (_, _) =>
                 {
-                    row.Background = (WpfBrush)FindResource("AccentSoft");
-                    row.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
+                    HighlightMenuRow(menuIndex);
                     if (action.Children.Count > 0)
                     {
                         ShowShareSubmenu(action.Children, row);
@@ -4060,6 +4137,10 @@ public partial class MainWindow : Window
                 {
                     row.Background = WpfBrushes.Transparent;
                     row.BorderBrush = WpfBrushes.Transparent;
+                    if (_menuHighlightIndex == menuIndex)
+                    {
+                        _menuHighlightIndex = -1;
+                    }
                 };
                 row.MouseLeftButtonDown += (_, e) =>
                 {
@@ -4155,6 +4236,71 @@ public partial class MainWindow : Window
         ActionMenuPopup.IsOpen = false;
         ShareSubmenuPopup.StaysOpen = false;
         ActionMenuPopup.StaysOpen = false;
+    }
+
+    private void HighlightMenuRow(int index)
+    {
+        if (_menuHighlightIndex >= 0 && _menuHighlightIndex < _menuRows.Count)
+        {
+            var (oldRow, _) = _menuRows[_menuHighlightIndex];
+            oldRow.Background = WpfBrushes.Transparent;
+            oldRow.BorderBrush = WpfBrushes.Transparent;
+        }
+
+        _menuHighlightIndex = index;
+        if (index < 0 || index >= _menuRows.Count)
+        {
+            return;
+        }
+
+        var (row, _) = _menuRows[index];
+        row.Background = (WpfBrush)FindResource("AccentSoft");
+        row.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
+    }
+
+    /// <summary>
+    /// Arrow/Enter handling while the action menu is open. Focus never leaves the search box —
+    /// the popup takes no keyboard focus — so the keys arrive on the window's tunnel pass and
+    /// are steered here. Escape stays with OnWindowKeyDown's close branch. Returns true when
+    /// the key was consumed.
+    /// </summary>
+    private bool HandleActionMenuKey(System.Windows.Input.KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Up or Key.Down:
+                if (_menuRows.Count > 0)
+                {
+                    var next = _menuHighlightIndex < 0
+                        ? (e.Key == Key.Down ? 0 : _menuRows.Count - 1)
+                        : Math.Clamp(_menuHighlightIndex + (e.Key == Key.Down ? 1 : -1), 0, _menuRows.Count - 1);
+                    HighlightMenuRow(next);
+                }
+
+                e.Handled = true;
+                return true;
+            case Key.Enter:
+                if (_menuHighlightIndex >= 0 && _menuHighlightIndex < _menuRows.Count)
+                {
+                    var (row, action) = _menuRows[_menuHighlightIndex];
+                    if (action.Children.Count > 0)
+                    {
+                        // The submenu stays mouse-operated; Enter just gets it on screen.
+                        ShowShareSubmenu(action.Children, row);
+                    }
+                    else
+                    {
+                        CloseActionMenus();
+                        action.Invoke();
+                        ShellLog.Info($"menu action label={action.Label} item={_menuItem?.Id ?? "none"} via=keyboard");
+                    }
+                }
+
+                e.Handled = true;
+                return true;
+        }
+
+        return false;
     }
 
     private void OnActionMenuClosed(object? sender, EventArgs e)
@@ -4954,6 +5100,26 @@ public partial class MainWindow : Window
         var index = pins.FindIndex(i => i.Id == item.Id);
         var target = index + Math.Sign(direction);
         return index >= 0 && target >= 0 && target < pins.Count;
+    }
+
+    /// <summary>
+    /// Reads the live pause flag from disk and keeps the in-memory settings in step, so a later
+    /// Save from the settings window cannot write a stale value back and silently flip capture.
+    /// </summary>
+    private bool RefreshCapturePaused()
+    {
+        var paused = ClipSharedSettings.Load().CapturePaused;
+        _settings.CapturePaused = paused;
+        return paused;
+    }
+
+    /// <summary>
+    /// The pause toggle lives in the watcher's tray menu, in another process; showing its state
+    /// here is what keeps a forgotten pause from silently eating every copy.
+    /// </summary>
+    private void RefreshCapturePausedBadge()
+    {
+        CapturePausedBadge.Visibility = RefreshCapturePaused() ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void CopySelected()
@@ -6809,6 +6975,11 @@ public partial class MainWindow : Window
 
     private void DeleteItem(ClipboardHistoryItem item)
     {
+        // Remember the FULL item before the store touches it: the list row may be a summary
+        // with truncated text, and Delete removes the asset file along with the entry, so the
+        // buffer has to copy those bytes aside while they still exist.
+        var full = _store.GetItem(item.Id) ?? item;
+        _deleteUndo.Remember(full);
         if (_store.Delete(item.Id))
         {
             if (_selected?.Id == item.Id)
@@ -6817,8 +6988,30 @@ public partial class MainWindow : Window
             }
 
             LoadItems(selectFirst: true, reason: "delete");
+            ShowToast("Deleted — Ctrl+Z to undo");
             ShellLog.Info($"delete item id={item.Id}");
         }
+        else
+        {
+            // Nothing was deleted, so there is nothing to offer an undo for.
+            _deleteUndo.Forget();
+        }
+    }
+
+    private void RestoreDeletedItem()
+    {
+        var item = _deleteUndo.TakeRestored();
+        if (item is null)
+        {
+            return;
+        }
+
+        // The store's normal add path: same dedupe, sidecar and trim rules as a fresh copy,
+        // but with its original timestamps kept so it returns to where it was in the list.
+        _store.AddOrUpdate(item, EffectiveHistoryLimit(), refreshCopiedAt: false);
+        LoadItems(selectFirst: _selected is null, reason: "undo-delete");
+        ShowToast("Restored");
+        ShellLog.Info($"undo delete id={item.Id}");
     }
 
     private void ShowPlaceholder(ClipboardHistoryItem item, string text)
@@ -9156,6 +9349,137 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Keys that must act on the list while the search box keeps focus. They are handled on the
+    /// tunnel pass because the TextBox consumes arrows, Delete and Ctrl+Z on the bubble pass, so
+    /// OnWindowKeyDown never sees them. Everything consumed here sets Handled, which is what
+    /// keeps an arrow from also moving the caret.
+    /// </summary>
+    private void OnWindowPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (ActionMenuPopup.IsOpen && HandleActionMenuKey(e))
+        {
+            return;
+        }
+
+        // Everything below acts on the list, and only while the search box owns the keyboard.
+        // When focus is anywhere else — the inline edit overlay, a rename box, the text preview —
+        // these keys belong to that control.
+        if (!SearchBox.IsKeyboardFocused)
+        {
+            return;
+        }
+
+        // Ctrl+1..9 pastes the Nth row without arrowing to it first.
+        if (Keyboard.Modifiers == ModifierKeys.Control && DigitFromKey(e.Key) is int digit)
+        {
+            var order = VisibleOrder(FilteredItems());
+            if (digit - 1 < order.Count)
+            {
+                SelectItem(order[digit - 1], reason: "digit-paste");
+                PasteSelected();
+                ShellLog.Info($"digit paste index={digit}");
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        // Palette-level undo outranks the text box's own undo only while there is actually a
+        // deleted item to bring back; otherwise Ctrl+Z keeps meaning "undo my typing".
+        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Z && _deleteUndo.HasItem)
+        {
+            RestoreDeletedItem();
+            e.Handled = true;
+            return;
+        }
+
+        if (Keyboard.Modifiers != ModifierKeys.None)
+        {
+            return;
+        }
+
+        // Delete only acts on the list when the search box has nothing for it to edit; with a
+        // query typed, the key keeps its forward-delete meaning.
+        if (e.Key == Key.Delete && string.IsNullOrEmpty(SearchBox.Text) &&
+            MatchesHotkey(e, _settings.Hotkeys.DeleteSelected))
+        {
+            if (_selected is not null)
+            {
+                DeleteItem(_selected);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        // Home/End likewise belong to the caret while there is text to edit.
+        if (e.Key is Key.Home or Key.End && !string.IsNullOrEmpty(SearchBox.Text))
+        {
+            return;
+        }
+
+        if (e.Key is Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Home or Key.End)
+        {
+            MoveSelection(e.Key);
+            e.Handled = true;
+        }
+    }
+
+    private static int? DigitFromKey(Key key)
+    {
+        if (key >= Key.D1 && key <= Key.D9)
+        {
+            return key - Key.D0;
+        }
+
+        return key >= Key.NumPad1 && key <= Key.NumPad9 ? key - Key.NumPad0 : null;
+    }
+
+    private void MoveSelection(Key key)
+    {
+        var order = VisibleOrder(FilteredItems());
+        if (order.Count == 0)
+        {
+            return;
+        }
+
+        var delta = key switch
+        {
+            Key.Up => -1,
+            Key.Down => 1,
+            Key.PageUp => -PaletteSelection.PageStep,
+            Key.PageDown => PaletteSelection.PageStep,
+            Key.Home => -order.Count,
+            _ => order.Count,
+        };
+
+        var next = PaletteSelection.Step(order, _selected?.Id, delta);
+        if (next is null || next.Id == _selected?.Id)
+        {
+            return;
+        }
+
+        SelectItem(next, reason: "keyboard");
+        ScrollRowIntoView(next.Id);
+    }
+
+    private void ScrollRowIntoView(string id)
+    {
+        // End (and a long PageDown) can land on an item whose row is still in the deferred
+        // batches; pull the remaining batches in before asking WPF to scroll to it. Each forced
+        // append either advances the index or clears the entries, so this terminates.
+        while (!_rows.ContainsKey(id) && _deferredRenderIndex < _deferredRenderEntries.Count)
+        {
+            AppendDeferredRowsIfNeeded(force: true);
+        }
+
+        if (_rows.TryGetValue(id, out var row))
+        {
+            row.BringIntoView();
+        }
+    }
+
     private void OnWindowKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (MatchesHotkey(e, _settings.Hotkeys.SaveDebugLog))
@@ -9192,7 +9516,12 @@ public partial class MainWindow : Window
         {
             if (_selected is not null)
             {
-                ShowActionMenu(_selected);
+                // Opened from the keyboard, the menu belongs against the selected row — the
+                // mouse could be anywhere on screen, and MousePoint would follow it there.
+                // Highlighting the first row means Enter works immediately.
+                ScrollRowIntoView(_selected.Id);
+                ShowActionMenu(_selected, _rows.GetValueOrDefault(_selected.Id));
+                HighlightMenuRow(0);
                 ShellLog.Info($"hotkey actions id={_selected.Id}");
             }
 

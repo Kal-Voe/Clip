@@ -17,6 +17,7 @@
         TextOptions.TextRenderingMode="Grayscale"
         TextOptions.TextHintingMode="Auto"
         Deactivated="OnDeactivated"
+        PreviewKeyDown="OnWindowPreviewKeyDown"
         KeyDown="OnWindowKeyDown">
     <Window.Resources>
         <SolidColorBrush x:Key="Bg" Color="#1F1E1F"/>
@@ -502,15 +503,27 @@
                         </Border>
                         <TextBlock Text="Shortcuts" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
                     </StackPanel>
-                    <Button x:Name="SettingsButton"
-                            Grid.Column="5"
-                            Style="{StaticResource IconButton}"
-                            Click="OnSettingsClick"
-                            ToolTip="Settings"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center">
-                        <Image x:Name="SettingsIcon" Width="16" Height="16" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                    </Button>
+                    <StackPanel Grid.Column="5" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <!-- The pause toggle lives in the tray menu, in another process; this badge is
+                             what keeps a forgotten pause from silently eating every copy. -->
+                        <Border x:Name="CapturePausedBadge"
+                                Visibility="Collapsed"
+                                BorderBrush="{DynamicResource Line2}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="7,2"
+                                Margin="0,0,10,0"
+                                Background="{DynamicResource Surface}">
+                            <TextBlock Text="Capture paused" Foreground="{DynamicResource Danger}" FontSize="12" FontWeight="Medium"/>
+                        </Border>
+                        <Button x:Name="SettingsButton"
+                                Style="{StaticResource IconButton}"
+                                Click="OnSettingsClick"
+                                ToolTip="Settings"
+                                VerticalAlignment="Center">
+                            <Image x:Name="SettingsIcon" Width="16" Height="16" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </Border>
 

@@ -119,6 +119,23 @@ public sealed class ClipSharedSettingsTests
     }
 
     [Fact]
+    public void CapturePausedDefaultsToOff()
+    {
+        Assert.False(ClipSharedSettings.LoadFromJson("{}").CapturePaused);
+        Assert.False(ClipSharedSettings.LoadFromJson("""{ "CapturePaused": "yes" }""").CapturePaused);
+    }
+
+    [Fact]
+    public void SetCapturePausedJsonRoundTrips()
+    {
+        var paused = ClipSharedSettings.SetCapturePausedJson("{}", true);
+        Assert.True(ClipSharedSettings.LoadFromJson(paused).CapturePaused);
+
+        var resumed = ClipSharedSettings.SetCapturePausedJson(paused, false);
+        Assert.False(ClipSharedSettings.LoadFromJson(resumed).CapturePaused);
+    }
+
+    [Fact]
     public void WritersPreserveUnknownKeys()
     {
         var json = """{ "FutureUnknownKey": 1, "Privacy": { "ExcludedApps": ["foo.exe"] } }""";

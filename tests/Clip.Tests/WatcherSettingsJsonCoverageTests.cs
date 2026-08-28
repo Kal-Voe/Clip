@@ -31,6 +31,15 @@ public sealed class WatcherSettingsJsonCoverageTests
     }
 
     [Fact]
+    public void CapturePausedReadsFromJsonAndDefaultsToOff()
+    {
+        Assert.False(WatcherSettings.LoadFromJson("{}").CapturePaused);
+        Assert.True(WatcherSettings.LoadFromJson("""{ "CapturePaused": true }""").CapturePaused);
+        // Only a literal true pauses; a string or number is not a request to stop capturing.
+        Assert.False(WatcherSettings.LoadFromJson("""{ "CapturePaused": "true" }""").CapturePaused);
+    }
+
+    [Fact]
     public void LoadReturnsSettingsEvenWithoutFileAccess()
     {
         var settings = WatcherSettings.Load();

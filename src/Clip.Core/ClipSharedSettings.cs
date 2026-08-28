@@ -15,7 +15,8 @@ public readonly record struct ClipSharedSettingsSnapshot(
     PasteFormatPreference DefaultPasteFormat,
     int? HistoryLimit,
     long? MaxItemSizeBytes,
-    string? ClipboardFolderPath);
+    string? ClipboardFolderPath,
+    bool CapturePaused);
 
 public static class ClipSharedSettings
 {
@@ -56,7 +57,8 @@ public static class ClipSharedSettings
             DefaultPasteFormat: PasteFormatValue(root, "DefaultPasteFormat", DefaultPasteFormat),
             HistoryLimit: NullableIntValue(root, "HistoryLimit", DefaultHistoryLimit),
             MaxItemSizeBytes: NullableLongValue(root, "MaxItemSizeBytes", DefaultMaxItemSizeBytes),
-            ClipboardFolderPath: StringValue(root, "ClipboardFolderPath"));
+            ClipboardFolderPath: StringValue(root, "ClipboardFolderPath"),
+            CapturePaused: BoolValue(root, "CapturePaused", false));
     }
 
     /// <summary>
@@ -126,6 +128,18 @@ public static class ClipSharedSettings
         return root.ToJsonString(JsonOptions);
     }
 
+    public static void SetCapturePaused(bool paused)
+    {
+        Update(json => SetCapturePausedJson(json, paused));
+    }
+
+    public static string SetCapturePausedJson(string json, bool paused)
+    {
+        var root = ParseRootObject(json);
+        root["CapturePaused"] = paused;
+        return root.ToJsonString(JsonOptions);
+    }
+
     public static void SetClipboardFolderPath(string? path)
     {
         Update(json => SetClipboardFolderPathJson(json, path));
@@ -153,7 +167,8 @@ public static class ClipSharedSettings
             DefaultPasteFormat,
             DefaultHistoryLimit,
             DefaultMaxItemSizeBytes,
-            null);
+            null,
+            false);
 
     private static JsonObject ParseRootObject(string json)
     {

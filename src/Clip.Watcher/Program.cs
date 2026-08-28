@@ -903,6 +903,7 @@ internal sealed class WatcherSettings
     public WatcherAppIconPreference AppIcon { get; init; } = WatcherAppIconPreference.Light;
     public string OpenHotkey { get; init; } = "Alt+V";
     public PasteFormatPreference DefaultPasteFormat { get; init; } = PasteFormatPreference.PlainText;
+    public bool CapturePaused { get; init; }
     public WatcherPrivacySettings Privacy { get; init; } = new();
 
     public static string SettingsPath => Clip.Core.ClipStoragePaths.SettingsPath;
@@ -946,6 +947,7 @@ internal sealed class WatcherSettings
                 AppIcon = AppIconProperty(root),
                 OpenHotkey = HotkeyProperty(root) ?? "Alt+V",
                 DefaultPasteFormat = PasteFormatProperty(root),
+                CapturePaused = BoolProperty(root, "CapturePaused"),
                 Privacy = WatcherPrivacySettings.FromJson(root),
             };
         }
@@ -991,6 +993,11 @@ internal sealed class WatcherSettings
         return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+    }
+
+    private static bool BoolProperty(JsonElement root, string name)
+    {
+        return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
     }
 
     private static PasteFormatPreference PasteFormatProperty(JsonElement root)
@@ -1303,7 +1310,7 @@ internal sealed class ClipboardWatcherForm : Form
             return;
         }
 
-        _trayIcon.Text = "Clip";
+        _trayIcon.Text = _settingsProvider.Current.CapturePaused ? "Clip — capture paused" : "Clip";
         ApplyTrayIcon(_settingsProvider.Current.AppIcon);
         _trayIcon.ContextMenuStrip = CreateTrayMenu();
         _trayIcon.DoubleClick += (_, _) => RunTrayAction(WatcherTrayAction.OpenClip);
@@ -1339,6 +1346,8 @@ internal sealed class ClipboardWatcherForm : Form
         }
     }
 
+    private ToolStripMenuItem? _pauseCaptureMenuItem;
+
     private ContextMenuStrip CreateTrayMenu()
     {
         var menu = new ContextMenuStrip();
@@ -1349,10 +1358,36 @@ internal sealed class ClipboardWatcherForm : Form
                 menu.Items.Add(new ToolStripSeparator());
             }
 
-            menu.Items.Add(item.Label, null, (_, _) => BeginInvokeIfAlive(() => RunTrayAction(item.Action)));
+            var entry = (ToolStripMenuItem)menu.Items.Add(item.Label, null, (_, _) => BeginInvokeIfAlive(() => RunTrayAction(item.Action)));
+            if (item.Action == WatcherTrayAction.TogglePauseCapture)
+            {
+                _pauseCaptureMenuItem = entry;
+            }
         }
 
+        // The check mark must show the current state even when another surface flipped it
+        // (settings edited by hand, another session), so it is read fresh at each open rather
+        // than cached from the last toggle.
+        menu.Opening += (_, _) =>
+        {
+            if (_pauseCaptureMenuItem is not null)
+            {
+                _pauseCaptureMenuItem.Checked = _settingsProvider.ReloadIfChanged().CapturePaused;
+            }
+        };
+
         return menu;
+    }
+
+    private void TogglePauseCapture()
+    {
+        var paused = !_settingsProvider.ReloadIfChanged().CapturePaused;
+        Clip.Core.ClipSharedSettings.SetCapturePaused(paused);
+        _settingsProvider.ReloadIfChanged();
+        // The tray tooltip is the one always-visible surface this process owns; balloons are
+        // suppressed on Windows 11, so the paused state has to live somewhere persistent.
+        _trayIcon.Text = paused ? "Clip — capture paused" : "Clip";
+        Program.LogDebug($"Capture paused={paused} via tray");
     }
 
     private void RunTrayAction(WatcherTrayAction action)
@@ -1366,6 +1401,9 @@ internal sealed class ClipboardWatcherForm : Form
                     break;
                 case WatcherTrayAction.PasteLatest:
                     PasteLatestFromTray();
+                    break;
+                case WatcherTrayAction.TogglePauseCapture:
+                    TogglePauseCapture();
                     break;
                 case WatcherTrayAction.CheckForUpdates:
                 case WatcherTrayAction.SaveLogSnapshot:
@@ -1791,6 +1829,13 @@ internal sealed class ClipboardWatcherForm : Form
         catch (Exception ex)
         {
             Program.LogError(ex);
+            return true;
+        }
+
+        // The user asked for silence; consume the sequence number so nothing retries this copy.
+        if (settings.CapturePaused)
+        {
+            Program.LogTrace("Clipboard capture skipped paused");
             return true;
         }
 
