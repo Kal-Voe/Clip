@@ -1056,10 +1056,14 @@ public partial class MainWindow : Window
             _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             _source?.AddHook(WndProc);
             var hwnd = new WindowInteropHelper(this).Handle;
-            // No ApplyRoundedWindowCorners here on purpose: the palette is layered
-            // (AllowsTransparency, for the acrylic) and DWM does not round layered windows, so the
-            // call would be a no-op that reads like the thing keeping the corners round. The Shell
-            // border's CornerRadius is what rounds the palette. The other windows still call it.
+            // Measured, not assumed: DWMWA_WINDOW_CORNER_PREFERENCE DOES clip a layered window,
+            // and it is the only thing that rounds the acrylic. The blur is painted by the
+            // compositor across the whole window rect and ignores WPF's per-pixel alpha, so the
+            // Shell's own CornerRadius cannot round it — a rounded Shell over square blur just
+            // leaves four wedges of tint outside the arc. SetWindowRgn is silently ignored on a
+            // layered window (it returns success and changes nothing; verified on this machine).
+            // DWM's clip is also antialiased, which a GDI region would not have been.
+            ApplyRoundedWindowCorners(hwnd);
             //
             // The constructor's theme pass ran before the hwnd existed, so it resolved to the
             // opaque palette; now that the window is real, re-theme so the acrylic blur
@@ -2300,10 +2304,8 @@ public partial class MainWindow : Window
             target.BackgroundColor = System.Windows.Media.Colors.Transparent;
         }
 
-        // The blur ignores WPF's per-pixel alpha, so turning the glass on has to bring the window
-        // region with it and turning it off has to take it away again.
-        UpdatePaletteWindowRegion();
-
+        // Nothing to do for the corners here: DWM's rounding is set once at SourceInitialized and
+        // clips the window whether or not the glass is on.
         ShellLog.Info($"backdrop preference applied want={_settings.TranslucentBackground} supported={PaletteBackdrop.IsSupported()} tint={_backdropTint:X8} active={_backdropActive}");
     }
 
@@ -11198,13 +11200,14 @@ public partial class MainWindow : Window
     /// Must stay equal to the Shell border's CornerRadius in XAML — a test asserts it, because the
     /// constant and the literal live in different files.
     ///
-    /// Back to 14. It was cut to 8 to match DWMWCP_ROUND while DWM was the thing clipping the
-    /// window; the palette is a layered window now (AllowsTransparency, for the acrylic), and DWM
-    /// does not round layered windows, so the Shell's own radius is the only silhouette left and
-    /// there is nothing to match. DWM rounding stays on for the settings and hotkey-help windows,
-    /// which are not layered and still rely on it.
+    /// 8, because DWMWCP_ROUND is what clips this window and 8 is the radius it uses. That holds
+    /// even though the palette is layered for the acrylic: DWM's corner clip was measured to apply
+    /// to a layered window, and it is the only thing that can round the blur, which the compositor
+    /// paints across the whole window rect no matter what WPF drew. So the Shell's radius is not
+    /// the silhouette — it only decides where its own border stroke sits, and a radius wider than
+    /// DWM's would hang that stroke inside the clip as a second, mismatched arc.
     /// </summary>
-    internal const double ShellCornerRadius = 14;
+    internal const double ShellCornerRadius = 8;
 
     /// <summary>
     /// The rounded clip the Shell needs in addition to ClipToBounds. Border.ClipToBounds clips to
@@ -11235,37 +11238,6 @@ public partial class MainWindow : Window
     private void UpdateShellClip()
     {
         Shell.Clip = ShellClipGeometry(Shell.ActualWidth, Shell.ActualHeight, Shell.CornerRadius.TopLeft);
-        UpdatePaletteWindowRegion();
-    }
-
-    /// <summary>
-    /// Keeps the window region in step with the Shell's shape while the glass is on. The acrylic
-    /// blur is painted across the whole window rectangle regardless of what WPF drew, so without a
-    /// region the palette's rounded corners have four wedges of tinted blur outside the arc — see
-    /// <see cref="PaletteBackdrop.ClipToRoundedRect"/>. Riding on UpdateShellClip is deliberate:
-    /// every path that changes the Shell's size or radius already calls it, including the two that
-    /// flatten the radius to 0, and a region left rounded there would shave the corners off a
-    /// full-screen video.
-    /// </summary>
-    private void UpdatePaletteWindowRegion()
-    {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd == IntPtr.Zero)
-        {
-            return;
-        }
-
-        if (!_backdropActive)
-        {
-            // With the glass off nothing paints outside the Shell, so WPF's per-pixel alpha rounds
-            // the corners on its own — and does it with antialiasing, which a region cannot.
-            PaletteBackdrop.ClearClip(hwnd);
-            return;
-        }
-
-        // The region is in physical pixels; the radius is in DIPs. On this machine that is 14 -> 21.
-        var scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
-        PaletteBackdrop.ClipToRoundedRect(hwnd, (int)Math.Round(Shell.CornerRadius.TopLeft * scale));
     }
 
     private void OnShellSizeChanged(object sender, SizeChangedEventArgs e) => UpdateShellClip();

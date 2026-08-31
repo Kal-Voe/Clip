@@ -274,13 +274,14 @@
         </Style>
     </Window.Resources>
 
-    <!-- 14 is the palette's own radius again. It was cut to 8 only to match DWMWCP_ROUND, back when
-         DWM was what clipped the window; a layered window does not get DWM's corner rounding at all,
-         so this Border is now the only silhouette there is — and it draws with real per-pixel alpha,
-         so the arc is antialiased rather than clipped. Keep this equal to
-         MainWindow.ShellCornerRadius; a test asserts it. -->
+    <!-- 8, matching DWMWCP_ROUND, which is what actually clips this window. Layered or not, DWM's
+         corner clip applies (measured), and it is the only thing that can round the acrylic — the
+         compositor paints the blur across the whole window rect and ignores WPF's per-pixel alpha,
+         so a wider radius here would not round anything, it would just hang this Border's stroke
+         inside DWM's arc as a second, mismatched one. Keep equal to MainWindow.ShellCornerRadius;
+         a test asserts it. -->
     <Border x:Name="Shell"
-            CornerRadius="14"
+            CornerRadius="8"
             Background="{DynamicResource Bg}"
             UseLayoutRounding="True"
             SnapsToDevicePixels="True"

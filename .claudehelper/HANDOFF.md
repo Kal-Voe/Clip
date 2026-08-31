@@ -3,6 +3,51 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## The glass is real now — and how it was measured (2026-08-31, v1.3.1)
+
+Isaiah, on the 1.2.x "glass": _"it did not look like glass, it just like light grey."_ He was right,
+and the reason is worth keeping: **DWMWA_SYSTEMBACKDROP_TYPE never blurred anything.** It returns
+`hr=0` and logs `active=True`, so every check said it worked — but it paints a flat sheet and never
+samples what is behind the window. Everything built on top of that (lowering alphas, retinting,
+restyling the header) was tuning the wrong dial, because the missing ingredient was the blur itself.
+
+**How to settle this class of question in five minutes** (scripts in the scratchpad, worth rebuilding
+if they are gone): put a hard RED|BLUE split behind the window and sample one scanline through it.
+Sharp jump = no blur, only alpha. Gradual ramp = real blur. Flat single colour = something opaque.
+That test is what produced every number below; do not trust a screenshot's vibe again.
+
+| approach | result |
+|---|---|
+| DWMSBT_TRANSIENTWINDOW (what 1.2.x shipped) | flat `D3D3D3`, zero trace of red or blue — the "light grey" |
+| + WS_CAPTION\|WS_THICKFRAME | unchanged, still flat |
+| accent acrylic on a NON-layered window | nothing (window renders black; no alpha to composite into) |
+| **AllowsTransparency + ACCENT_ENABLE_ACRYLICBLURBEHIND** | **`481313 … 3A1334 … 15158C` — tinted AND blended. Real acrylic.** |
+
+That last one is what `window-vibrancy`'s `apply_acrylic` calls, i.e. what asyar uses on Windows.
+**The objection that blocked it for days was wrong:** the audit said never use AllowsTransparency
+because it kills ClearType — but this window sets `TextRenderingMode="Grayscale"` on purpose, so
+there was never anything to lose.
+
+**Corners, also measured, and the first fix was wrong.** The blur is painted across the whole window
+rect and ignores WPF's per-pixel alpha, so a rounded Shell alone leaves four wedges of tint outside
+the arc. The first attempt clipped with `SetWindowRgn` — it returns success and does nothing, because
+regions are ignored on layered windows (verified: corner stayed square). What does work, contrary to
+the usual advice, is **`DWMWA_WINDOW_CORNER_PREFERENCE` on the layered window** — it clips the acrylic
+and antialiases the arc. So DWM is the clipper again and `ShellCornerRadius` is back to **8** to match
+it; a wider radius only hangs the Shell's border stroke inside DWM's arc as a second mismatched one.
+
+Verified on the running app, not in a spike: scanline through the real palette ramps
+`311717 → 2C1824 → 1F1844 → 161657`, and the magnified top-left corner is a clean arc with desktop
+outside and blur inside. 1062 tests green.
+
+### Next steps
+
+1. Tint strength is one byte: `PaletteBackdrop.TintAlpha` (0xA6). Lower = more see-through.
+2. No drop shadow — DWM does not draw one here. If it reads detached, a 1px `Line` hairline on the
+   Shell is the cheap fix (what the Win11 flyouts do); a real shadow needs a bigger window and is not
+   worth it.
+3. Light theme's tint is unverified.
+
 ## The glass corners showed two arcs (2026-08-28, released v1.2.1)
 
 Isaiah, on the v1.2.0 palette: "the corners look bad." Magnified pixel capture of the live window

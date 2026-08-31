@@ -87,9 +87,9 @@ public sealed class PaletteBackdropTests
     }
 
     [Theory]
-    [InlineData(800, 520, 14, 14)]
+    [InlineData(800, 520, 8, 8)]
     [InlineData(800, 520, 0, 0)]     // fullscreen and expanded-image flatten the radius to 0
-    [InlineData(10, 800, 14, 5)]     // never more than half the shorter side
+    [InlineData(10, 800, 8, 5)]      // never more than half the shorter side
     public void ShellClipGeometryRoundsToTheShellRadius(double width, double height, double radius, double expected)
     {
         var clip = MainWindow.ShellClipGeometry(width, height, radius);

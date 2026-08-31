@@ -86,11 +86,6 @@ internal static class PaletteBackdrop
     [DllImport("user32.dll")]
     private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
 
-    [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr hwnd, IntPtr region, bool redraw);
-    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
-    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr handle);
-
     internal static bool IsSupported() => IsSupported(Environment.OSVersion.Version);
 
     internal static bool IsSupported(Version osVersion) =>
@@ -155,74 +150,6 @@ internal static class PaletteBackdrop
         catch (Exception ex)
         {
             ShellLog.Error(ex, "acrylic blur remove failed");
-        }
-    }
-
-    /// <summary>
-    /// Clips the window — and, the whole point, the acrylic blur — to a rounded rectangle.
-    ///
-    /// The blur is painted behind the layered surface across the entire window rectangle; it is not
-    /// masked by what WPF actually drew. The spike saw the tint in places where WPF had painted
-    /// nothing at all. So the Shell border's rounded corners cut the fill, and four squared-off
-    /// wedges of tinted blur are left outside the arc. A window region is the only thing that clips
-    /// the compositor's own paint, and it is how Windows 10 acrylic apps got rounded corners.
-    ///
-    /// The cost is that a region has no antialiasing: the arc is a hard staircase instead of the
-    /// soft one WPF draws. At this radius and 150% DPI that is a pixel or two, and it beats four
-    /// grey wedges. <paramref name="radiusPx"/> of 0 (fullscreen, expanded image) drops the region
-    /// entirely rather than clipping a full-screen video's corners off.
-    ///
-    /// Best-effort like everything else here: a failure just leaves the window unclipped.
-    /// </summary>
-    internal static void ClipToRoundedRect(IntPtr hwnd, int radiusPx)
-    {
-        try
-        {
-            if (radiusPx <= 0 || !GetWindowRect(hwnd, out var rect))
-            {
-                ClearClip(hwnd);
-                return;
-            }
-
-            var width = rect.Right - rect.Left;
-            var height = rect.Bottom - rect.Top;
-            if (width <= 0 || height <= 0)
-            {
-                return;
-            }
-
-            // CreateRoundRectRgn takes the corner ELLIPSE size, which is twice the radius. The
-            // region is in window coordinates, so it always starts at 0,0 whatever Left/Top are —
-            // which is why the palette being parked off screen does not disturb it.
-            var region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radiusPx * 2, radiusPx * 2);
-            if (region == IntPtr.Zero)
-            {
-                return;
-            }
-
-            // On success the window owns the region; deleting it here would free it out from under
-            // the compositor. Only a failed call leaves it ours to clean up.
-            if (SetWindowRgn(hwnd, region, true) == 0)
-            {
-                _ = DeleteObject(region);
-            }
-        }
-        catch (Exception ex)
-        {
-            ShellLog.Error(ex, "rounded window region failed");
-        }
-    }
-
-    /// <summary>Drops the region, so WPF's own per-pixel alpha is the only thing shaping the window.</summary>
-    internal static void ClearClip(IntPtr hwnd)
-    {
-        try
-        {
-            _ = SetWindowRgn(hwnd, IntPtr.Zero, true);
-        }
-        catch (Exception ex)
-        {
-            ShellLog.Error(ex, "rounded window region clear failed");
         }
     }
 
