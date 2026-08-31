@@ -80,6 +80,35 @@ Items 2 and 3 of the list below, done together because they share one drag path.
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Four follow-ups: light theme, preview drag, multi-select, and the CIDA that did not survive (2026-08-31, v1.7.0)
+
+**1. Light theme — checked, nothing to fix.** Ran the app in Light and looked: text readable, chips
+and selection outlines hold, the glass reads as a frosted light panel. Every colour this session was
+chosen in dark, so this was the real unknown; the answer is that it is fine. `Muted2` is #474747 in
+light, a dark line on a light surface, which is why the hover outline still registers.
+
+**2. Preview pane drags.** The arming half of the row gesture is shared now (`TryStartArmedDrag`),
+and the preview's outer Border arms it for the previewed item. Handlers are on the *bubbling*
+events, so a press inside the text preview is taken by the TextBox and selecting text is unchanged;
+the expanded-image overlay is excluded explicitly so it cannot fight the pan. Verified on screen: a
+drag started from the preview pane completes with `effect=Copy`.
+
+**3. Multi-select.** Ctrl toggles, Shift extends from the anchor, dragging any selected row drags
+the set. Fill now means "selected" and the outline means "previewed", so the one-fill rule still
+holds. 19 unit tests on the selection model. **Not hand-verified on screen** — worth a real pass.
+
+**4. The CIDA does NOT work through the app. Reverted.**
+A subagent measured 5/5 successful Explorer drops and deleted the `DragClipsAsFiles` setting on that
+basis. It measured its own probe process, not the shipped path. Through the real app: **3 out of 3
+text drags into a real Explorer window were refused** (`effect=None`, nothing created), while an
+image drag into the same window in the same session landed its .png — so the harness and the target
+were fine and the CIDA path specifically is not. Commit eb8cda3 reverted; the setting is back, off
+by default, and text-into-a-field is untouched.
+
+The lesson worth keeping: a drag verified in a purpose-built probe is not verified. The probe does
+not conceal its window mid-drag, is not the palette, and does not prove the shipped data object.
+Verify drags by driving the real installed app into a real target.
+
 ## The toggle's stock glow, and the menu's missing last row (2026-08-31, v1.6.3)
 
 - **The settings toggles had Windows' own hover glow** around them. The switch is a hand-built
