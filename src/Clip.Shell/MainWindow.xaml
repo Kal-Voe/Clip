@@ -169,7 +169,6 @@
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource Selected}"/>
                                 <Setter TargetName="Root" Property="Opacity" Value="0.92"/>
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
@@ -193,7 +192,6 @@
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource Selected}"/>
                                 <Setter TargetName="Root" Property="Opacity" Value="0.88"/>
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
@@ -217,7 +215,6 @@
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource Selected}"/>
                                 <Setter TargetName="Root" Property="Opacity" Value="0.88"/>
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
@@ -254,7 +251,6 @@
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource Muted2}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource Selected}"/>
                                 <Setter TargetName="Root" Property="Opacity" Value="0.9"/>
                             </Trigger>
                         </ControlTemplate.Triggers>

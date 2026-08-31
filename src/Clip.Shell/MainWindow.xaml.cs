@@ -4137,10 +4137,9 @@ public partial class MainWindow : Window
                 return;
             }
 
-            // Outline, never a fill. Every row already carries a 1px border for the selection, so
-            // hover just lights it -- the grey wash this replaced was the same one the toolbar
-            // dropped, and it read heaviest on the wider-gamut monitors.
-            row.BorderBrush = (WpfBrush)FindResource("Line2");
+            // Outline, never a fill, and the same bright one the chips and the Open button use --
+            // Line2 was too close to the row's own dark to register as hover on the wider monitors.
+            row.BorderBrush = (WpfBrush)FindResource("Muted2");
         };
         row.MouseLeave += (_, _) =>
         {
@@ -4300,7 +4299,7 @@ public partial class MainWindow : Window
             {
                 if (preview is not null)
                 {
-                    _dragPreview?.Show(preview, (WpfBrush)FindResource("Surface"));
+                    _dragPreview?.Show(preview, WpfBrushes.Black);
                 }
             }
             catch (Exception ex)
@@ -4380,7 +4379,7 @@ public partial class MainWindow : Window
             var text = new TextBlock
             {
                 Text = label,
-                Foreground = (WpfBrush)FindResource("Text"),
+                Foreground = WpfBrushes.White,
                 FontSize = 12,
                 TextWrapping = TextWrapping.NoWrap,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -4418,18 +4417,19 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The chip the preview shows: the palette's own surface, line and 6px radius, so a dragged
-    /// clip reads as the row that left the list rather than as a tooltip. The preview window
-    /// cannot be transparent — WPF drops to software rendering the moment a window allows it, and
-    /// a juddering preview is worse than square corners — so the window behind this is filled with
-    /// the same Surface brush and the rounding shows in the border, not in the silhouette.
+    /// WinShot's chrome exactly: a white hairline on black. The first cut themed this in the
+    /// palette's Surface and Line, which is defensible on its own but is not what WinShot looks
+    /// like, and matching WinShot is the request. White on black also survives being dragged over
+    /// anything — a themed dark card disappears against a dark target, which is precisely where a
+    /// drag preview needs to stay legible. The preview window cannot be transparent (WPF drops to
+    /// software rendering the moment a window allows it, and a juddering preview is worse than
+    /// square corners), so the window behind is filled black to match and the corners stay square.
     /// </summary>
     private Border WrapDragPreview(UIElement content, Thickness padding) => new()
     {
-        Background = (WpfBrush)FindResource("Surface"),
-        BorderBrush = (WpfBrush)FindResource("Line"),
+        Background = WpfBrushes.Black,
+        BorderBrush = WpfBrushes.White,
         BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(6),
         Padding = padding,
         Child = content,
     };
