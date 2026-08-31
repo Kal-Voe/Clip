@@ -3,6 +3,39 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## OCR text, transforms, snippets, paste-and-stay, backup (2026-08-31, v1.4.0)
+
+Isaiah asked what was left worth doing. Perf was already done and measured, so this was features.
+
+- **Copy Text** on image items finally surfaces the OCR that was already being computed and stored --
+  it had only ever been reachable by searching. 129 of the 500 items in the live store had OCR text
+  sitting unused. Gated by the pure `CanCopyOcrText` (kind + `ExtractTextFromImages` + engine
+  available + non-blank), so it is absent rather than present-and-failing. It re-reads the item from
+  the store first: the list row carries a length-capped summary, so copying off the row would hand
+  over a truncated transcript.
+- **Transform submenu** (upper/lower/title/trim/single-line/extract URLs) in `ClipboardTextTransforms`,
+  pure and heavily tested. Entries that would be no-ops are hidden, which is why all six are
+  evaluated eagerly at menu-open -- a known cost on very large text items, noted below.
+- **New Snippet** as a footer `+` button. The item is not created until Save, so an abandoned edit
+  leaves nothing behind.
+- **Shift+Enter pastes without closing** and advances to the next row. The follow-on row is chosen
+  *before* the paste, because pasting re-copies the item and the watcher floats it back to the top --
+  the list reorders underneath. Stops at the end rather than wrapping.
+- **Export / Restore** the history as a zip, in History settings, with a round-trip test. Restore
+  writes to a temp location and swaps, and refuses a zip that is not a Clip export.
+
+1147 tests. Verified on screen: Transform submenu present in the action menu, and the footer shows
+"Shift+Enter Paste & stay" alongside the new `+`.
+
+### Next steps
+
+1. Worth Isaiah's eye: "Copy Text" on a screenshot, and Restore actually restoring.
+2. Known cost: the Transform submenu runs all six transforms at menu-open so it can hide dead rows.
+   Fine for ordinary clipboard text; on a multi-hundred-KB item it could hitch. The fix, if it is
+   ever felt, is a size threshold above which all six are offered unconditionally.
+3. Still open from the original audit: bundle Inter/JetBrains Mono (the UI names fonts it does not
+   ship, so everyone sees Segoe fallbacks), and the glass has no drop shadow.
+
 ## Both bars drag, buttons included (2026-08-31, v1.3.6)
 
 Isaiah: dragging should work from the buttons in the top bar too, and from the bottom bar, and from
