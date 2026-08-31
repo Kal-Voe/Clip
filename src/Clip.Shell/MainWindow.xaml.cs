@@ -4112,7 +4112,10 @@ public partial class MainWindow : Window
                 return;
             }
 
-            row.Background = (WpfBrush)FindResource("AccentSoft");
+            // Outline, never a fill. Every row already carries a 1px border for the selection, so
+            // hover just lights it -- the grey wash this replaced was the same one the toolbar
+            // dropped, and it read heaviest on the wider-gamut monitors.
+            row.BorderBrush = (WpfBrush)FindResource("Line2");
         };
         row.MouseLeave += (_, _) =>
         {
@@ -4121,7 +4124,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            row.Background = WpfBrushes.Transparent;
+            row.BorderBrush = WpfBrushes.Transparent;
         };
         row.MouseLeftButtonDown += (_, e) =>
         {
