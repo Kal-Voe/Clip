@@ -566,6 +566,17 @@
                                 Background="{DynamicResource Surface}">
                             <TextBlock Text="Capture paused" Foreground="{DynamicResource Danger}" FontSize="12" FontWeight="Medium"/>
                         </Border>
+                        <!-- The one thing pinning could not do: start an item that was never a
+                             copy. It sits next to Settings because the footer's other slots are
+                             keycap hints, which are reference labels rather than controls. -->
+                        <Button x:Name="NewSnippetButton"
+                                Style="{StaticResource IconButton}"
+                                Click="OnNewSnippetClick"
+                                ToolTip="New Snippet"
+                                Margin="0,0,2,0"
+                                VerticalAlignment="Center">
+                            <Image x:Name="NewSnippetIcon" Width="16" Height="16" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Button>
                         <Button x:Name="SettingsButton"
                                 Style="{StaticResource IconButton}"
                                 Click="OnSettingsClick"

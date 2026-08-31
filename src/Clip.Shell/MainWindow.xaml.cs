@@ -4164,6 +4164,12 @@ public partial class MainWindow : Window
         {
             actions.Add(new MenuAction("Edit Text", () => EditText(item), true, shortcut: _settings.Hotkeys.EditSelected));
             actions.Add(new MenuAction("Append to Clipboard", () => AppendText(item)));
+            AddTransformSubmenu(actions, item);
+        }
+
+        if (CanCopyOcrText(item.Kind, item.OcrText, _settings.ExtractTextFromImages, OcrTextExtractor.IsAvailable))
+        {
+            actions.Add(new MenuAction("Copy Text", () => CopyOcrText(item)));
         }
 
         if (item.Kind == ClipboardItemKind.Link)
@@ -4206,6 +4212,109 @@ public partial class MainWindow : Window
         actions.Add(new MenuAction("Save as File...", () => SaveItem(item)));
         actions.Add(new MenuAction("Delete", () => DeleteItem(item), true, danger: true, shortcut: "Del"));
         ShowStyledMenu(actions, target);
+    }
+
+    /// <summary>
+    /// Offers only the transforms that would actually do something to this item. A transform
+    /// whose result equals the text — lowercasing text that is already lowercase, extracting URLs
+    /// from a paragraph with none — is a row that looks like it works and then silently does not,
+    /// so it is left out rather than shown disabled.
+    /// </summary>
+    private void AddTransformSubmenu(List<MenuAction> actions, ClipboardHistoryItem item)
+    {
+        var text = FullTextPayload(item);
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        var children = new List<MenuAction>();
+        void Offer(string label, Func<string, string> transform)
+        {
+            var result = transform(text);
+            if (!ShouldOfferTransform(text, result))
+            {
+                return;
+            }
+
+            children.Add(new MenuAction(label, () => CopyTransformed(label, result)));
+        }
+
+        Offer("UPPERCASE", ClipboardTextTransforms.Upper);
+        Offer("lowercase", ClipboardTextTransforms.Lower);
+        Offer("Title Case", ClipboardTextTransforms.TitleCase);
+        Offer("Trim Whitespace", ClipboardTextTransforms.Trim);
+        Offer("Single Line", ClipboardTextTransforms.SingleLine);
+        Offer("Extract URLs", ClipboardTextTransforms.ExtractUrls);
+
+        if (children.Count > 0)
+        {
+            actions.Add(MenuAction.Submenu("Transform", children));
+        }
+    }
+
+    /// <summary>
+    /// A transform earns a menu row only when it would change something. One that returns the
+    /// text unchanged, or nothing at all — Extract URLs over a paragraph with no links — reads as
+    /// a working command and then silently does nothing, so it is left out rather than greyed.
+    /// </summary>
+    internal static bool ShouldOfferTransform(string source, string result) =>
+        result.Length > 0 && !string.Equals(result, source, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Transforms hand back a copy rather than rewriting the item: the stored clipboard entry is
+    /// a record of what was copied, and quietly rewriting history would lose the original.
+    /// </summary>
+    private void CopyTransformed(string label, string result)
+    {
+        SetClipboardText(result);
+        ShowToast($"Copied · {label}");
+        ShellLog.Info($"transform copied label={label} length={result.Length}");
+    }
+
+    /// <summary>
+    /// Recognized image text is only worth offering when it exists. OCR is off by default for
+    /// privacy and needs a Windows language pack, so with either missing the action must not
+    /// appear at all — a row that can only fail is worse than no row.
+    /// </summary>
+    internal static bool CanCopyOcrText(ClipboardItemKind kind, string? ocrText, bool extractTextEnabled, bool ocrEngineAvailable) =>
+        kind == ClipboardItemKind.Image &&
+        extractTextEnabled &&
+        ocrEngineAvailable &&
+        !string.IsNullOrWhiteSpace(ocrText);
+
+    private void CopyOcrText(ClipboardHistoryItem item)
+    {
+        // The list rows carry a capped copy of OcrText so the summary index stays small, so the
+        // full text has to come from the store or a screenshot's transcript arrives truncated.
+        var text = _store.GetItem(item.Id)?.OcrText ?? item.OcrText;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        SetClipboardText(text);
+        ShowToast("Copied text");
+        ShellLog.Info($"ocr text copied id={item.Id} length={text.Length}");
+    }
+
+    /// <summary>
+    /// Plain text onto the clipboard through the same Win32 path <see cref="SetClipboard"/> uses.
+    /// Not WPF's Clipboard.SetText: it answers a failed OLE flush with FailFast, which has killed
+    /// Clip outright before.
+    /// </summary>
+    private void SetClipboardText(string text)
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (Win32ClipboardWriter.TrySetText(hwnd, text, null, null))
+        {
+            return;
+        }
+
+        ShellLog.Snapshot("clipboard win32 set text failed; falling back to WPF without flush");
+        var data = new System.Windows.DataObject();
+        data.SetText(text, System.Windows.TextDataFormat.UnicodeText);
+        System.Windows.Clipboard.SetDataObject(data, copy: false);
     }
 
     private void ShowStyledMenu(IEnumerable<MenuAction> actions, UIElement? target)
@@ -6236,11 +6345,19 @@ public partial class MainWindow : Window
         }
     }
 
-    private void EditText(ClipboardHistoryItem item)
+    private void EditText(ClipboardHistoryItem item) => EditText(item, isNewSnippet: false);
+
+    /// <summary>
+    /// A new snippet reuses this whole editor rather than growing an authoring UI of its own.
+    /// <paramref name="isNewSnippet"/> rides along instead of a field so the flag cannot outlive
+    /// the editor it belongs to and turn a later ordinary edit into an accidental insert.
+    /// </summary>
+    private void EditText(ClipboardHistoryItem item, bool isNewSnippet)
     {
-        item = FullTextItem(item);
+        // A snippet is not in the store yet, so there is no fuller copy of it to hydrate.
+        item = isNewSnippet ? item : FullTextItem(item);
         var watch = Stopwatch.StartNew();
-        if (TryShowTextEditOverlay(item, watch))
+        if (TryShowTextEditOverlay(item, watch, isNewSnippet))
         {
             return;
         }
@@ -6255,11 +6372,7 @@ public partial class MainWindow : Window
         {
             if (editor.ShowDialog() == true)
             {
-                _store.EditText(item.Id, editor.Value);
-                item.Text = editor.Value;
-                item.Preview = ClipboardHistoryStore.PreviewText(editor.Value);
-                LoadItems(selectFirst: false, reason: "edit-text");
-                SelectItem(_store.GetItem(item.Id), "edit-text");
+                SaveTextEdit(item, editor.Value, isNewSnippet);
             }
         }
         finally
@@ -6269,7 +6382,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool TryShowTextEditOverlay(ClipboardHistoryItem item, Stopwatch watch)
+    private bool TryShowTextEditOverlay(ClipboardHistoryItem item, Stopwatch watch, bool isNewSnippet)
     {
         if (Shell.Child is not Grid root)
         {
@@ -6340,7 +6453,7 @@ public partial class MainWindow : Window
             }
             else if (e.Key == Key.Enter && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
             {
-                CommitTextEditOverlay(item, box.Text);
+                CommitTextEditOverlay(item, box.Text, isNewSnippet);
                 e.Handled = true;
             }
         };
@@ -6357,7 +6470,7 @@ public partial class MainWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.Children.Add(new TextBlock
         {
-            Text = "Edit Text",
+            Text = isNewSnippet ? "New Snippet" : "Edit Text",
             Foreground = foreground,
             FontSize = 15,
             FontWeight = FontWeights.SemiBold,
@@ -6392,7 +6505,7 @@ public partial class MainWindow : Window
         cancel.Margin = new Thickness(0, 0, 8, 0);
         cancel.Click += (_, _) => CloseInlineModal();
         var save = InlineModalButton("Save", foreground, line, surface, accentSoft, selectedBorder, selected, primary: true);
-        save.Click += (_, _) => CommitTextEditOverlay(item, box.Text);
+        save.Click += (_, _) => CommitTextEditOverlay(item, box.Text, isNewSnippet);
         buttons.Children.Add(cancel);
         buttons.Children.Add(save);
         Grid.SetRow(buttons, 2);
@@ -6419,15 +6532,67 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private void CommitTextEditOverlay(ClipboardHistoryItem item, string value)
+    private void CommitTextEditOverlay(ClipboardHistoryItem item, string value, bool isNewSnippet)
     {
         CloseInlineModal(showPalette: false);
+        SaveTextEdit(item, value, isNewSnippet);
+        ShowPalette();
+    }
+
+    /// <summary>
+    /// Writes an edited value back to history.
+    ///
+    /// A new snippet has no row until this point: creating it only on save is what keeps a
+    /// cancelled or empty editor from leaving a blank item behind, and it means the abandon path
+    /// needs no cleanup at all — there is nothing to clean up.
+    /// </summary>
+    private void SaveTextEdit(ClipboardHistoryItem item, string value, bool isNewSnippet)
+    {
+        if (isNewSnippet)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                ShellLog.Info("new snippet discarded empty");
+                return;
+            }
+
+            item.Text = value;
+            item.Preview = ClipboardHistoryStore.PreviewText(value);
+            var stored = _store.AddOrUpdate(item, EffectiveHistoryLimit());
+
+            // AddOrUpdate keeps IsPinned but not the order, and typing text that already exists in
+            // history returns that item instead — either way this is what actually pins the row.
+            _store.SetPinned(stored.Id, true);
+            LoadItems(selectFirst: false, reason: "new-snippet");
+            SelectItem(_store.GetItem(stored.Id), "new-snippet");
+            ShowToast("Snippet pinned");
+            ShellLog.Info($"new snippet id={stored.Id} length={value.Length}");
+            return;
+        }
+
         _store.EditText(item.Id, value);
         item.Text = value;
         item.Preview = ClipboardHistoryStore.PreviewText(value);
         LoadItems(selectFirst: false, reason: "edit-text");
         SelectItem(_store.GetItem(item.Id), "edit-text");
-        ShowPalette();
+    }
+
+    /// <summary>
+    /// Authors a pinned item from scratch. Pin plus Rename plus Edit Text already behave like a
+    /// snippet store; the only thing missing was a way to start one that was not a copy.
+    /// </summary>
+    private void NewSnippet()
+    {
+        CloseActionMenus();
+        var draft = new ClipboardHistoryItem
+        {
+            Kind = ClipboardItemKind.Text,
+            Text = string.Empty,
+            IsPinned = true,
+            SourceApplication = "Clip",
+        };
+        ShellLog.Info("new snippet started");
+        EditText(draft, isNewSnippet: true);
     }
 
     private void RenameItem(ClipboardHistoryItem item)
@@ -8460,6 +8625,9 @@ public partial class MainWindow : Window
         if (_selected.Kind == ClipboardItemKind.Text) EditText(_selected);
         else OpenItem(_selected);
     }
+
+    private void OnNewSnippetClick(object sender, RoutedEventArgs e) => NewSnippet();
+
     private void OnSettingsClick(object sender, RoutedEventArgs e) => OpenSettingsInternal(showPaletteOnClose: true);
 
     public void OpenSettingsFromTray() => OpenSettingsInternal(showPaletteOnClose: false);
@@ -9255,6 +9423,7 @@ public partial class MainWindow : Window
     {
         SearchGlyphIcon.Source = RenderChromeIcon(ChromeIconKind.Search, "Muted");
         SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "Muted2");
+        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "Muted2");
         DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "Muted2");
         FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "Muted2");
         MediaDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, IsMediaFilter(_kindFilter) ? "Text" : "Muted2");
@@ -9286,6 +9455,7 @@ public partial class MainWindow : Window
         ChevronDown,
         Expand,
         Search,
+        Plus,
     }
 
     private enum ItemVectorIconKind
@@ -9340,6 +9510,11 @@ public partial class MainWindow : Window
                 // of the '⌕' glyph it replaced.
                 drawing.Children.Add(new GeometryDrawing(null, pen, new EllipseGeometry(new System.Windows.Point(10.5, 10.5), 5.8, 5.8)));
                 AddLine(drawing, pen, 14.9, 14.9, 19.5, 19.5);
+                break;
+
+            case ChromeIconKind.Plus:
+                AddLine(drawing, pen, 12, 6, 12, 18);
+                AddLine(drawing, pen, 6, 12, 18, 12);
                 break;
 
             case ChromeIconKind.Expand:
