@@ -3,6 +3,18 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## The last grey fills, in the places you had not opened yet (2026-08-31, v1.6.2)
+
+Applying Isaiah's own rule -- only the previewed row gets a fill -- to the two places it had not
+reached, both of which he would have found himself:
+- **The right-click action menu** filled `AccentSoft` on hover and on the keyboard highlight. Both
+  light the bright `Muted2` outline now instead.
+- **The settings dialog's buttons** still had a resting `Surface2` slab with an `AccentSoft` hover.
+  They are outlined like everything else, hover lighting the border. `SettingsPalette` gained
+  `Muted2` so the settings window can use the same bright neutral rather than a dimmer stand-in.
+
+Also confirmed: v1.6.1 was already GitHub's Latest -- the release workflow marks each new tag.
+
 ## WinShot's preview chrome, no grey fills left, and dropped links (2026-08-31, v1.6.0)
 
 - **Press stopped filling grey** on the chips, Open, Edit, expand, settings and the + button. It

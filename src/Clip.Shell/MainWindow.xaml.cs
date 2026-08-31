@@ -4972,8 +4972,9 @@ public partial class MainWindow : Window
             {
                 row.MouseEnter += (_, _) =>
                 {
-                    row.Background = (WpfBrush)FindResource("AccentSoft");
-                    row.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
+                    // Outline only, the palette's rule everywhere except the previewed row.
+                    row.Background = WpfBrushes.Transparent;
+                    row.BorderBrush = (WpfBrush)FindResource("Muted2");
                 };
                 row.MouseLeave += (_, _) =>
                 {
@@ -5024,8 +5025,8 @@ public partial class MainWindow : Window
         }
 
         var (row, _) = _menuRows[index];
-        row.Background = (WpfBrush)FindResource("AccentSoft");
-        row.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
+        row.Background = WpfBrushes.Transparent;
+        row.BorderBrush = (WpfBrush)FindResource("Muted2");
     }
 
     /// <summary>
@@ -9425,6 +9426,7 @@ public partial class MainWindow : Window
         (WpfBrush)FindResource("Surface3"),
         (WpfBrush)FindResource("Text"),
         (WpfBrush)FindResource("Muted"),
+        (WpfBrush)FindResource("Muted2"),
         (WpfBrush)FindResource("Line"),
         (WpfBrush)FindResource("Line2"),
         (WpfBrush)FindResource("Accent"),
@@ -13321,7 +13323,7 @@ internal sealed class ExcludedAppPickerWindow : Window
     }
 }
 
-internal sealed record SettingsPalette(WpfBrush Bg, WpfBrush Surface, WpfBrush Surface2, WpfBrush Surface3, WpfBrush Text, WpfBrush Muted, WpfBrush Line, WpfBrush Line2, WpfBrush Accent, WpfBrush AccentSoft, WpfBrush Selected, WpfBrush SelectedBorder);
+internal sealed record SettingsPalette(WpfBrush Bg, WpfBrush Surface, WpfBrush Surface2, WpfBrush Surface3, WpfBrush Text, WpfBrush Muted, WpfBrush Muted2, WpfBrush Line, WpfBrush Line2, WpfBrush Accent, WpfBrush AccentSoft, WpfBrush Selected, WpfBrush SelectedBorder);
 
 internal sealed class SettingsWindow : Window
 {
@@ -13446,6 +13448,7 @@ internal sealed class SettingsWindow : Window
     private WpfBrush _surface3 = WpfBrushes.Transparent;
     private WpfBrush _text = WpfBrushes.Black;
     private WpfBrush _muted = WpfBrushes.Gray;
+    private WpfBrush _muted2 = WpfBrushes.LightGray;
     private WpfBrush _line = WpfBrushes.Transparent;
     private WpfBrush _line2 = WpfBrushes.Transparent;
     private WpfBrush _accent = WpfBrushes.Teal;
@@ -13746,6 +13749,7 @@ internal sealed class SettingsWindow : Window
         _surface3 = palette.Surface3;
         _text = palette.Text;
         _muted = palette.Muted;
+        _muted2 = palette.Muted2;
         _line = palette.Line;
         _line2 = palette.Line2;
         _accent = palette.Accent;
@@ -15666,7 +15670,10 @@ internal sealed class SettingsWindow : Window
             Width = 88,
             Height = 30,
             Padding = new Thickness(12, 0, 12, 0),
-            Background = _surface2,
+            // Outline, never a slab. The settings dialog was the last place still painting a
+            // resting grey fill on a button, which is the thing the palette spent a release
+            // getting rid of; hover lights the border here exactly as it does out there.
+            Background = WpfBrushes.Transparent,
             Foreground = _text,
             BorderBrush = _line,
             BorderThickness = new Thickness(1),
@@ -15674,8 +15681,8 @@ internal sealed class SettingsWindow : Window
             Template = SubtleSettingsButtonTemplate(),
             FocusVisualStyle = null,
         };
-        button.MouseEnter += (_, _) => button.Background = _accentSoft;
-        button.MouseLeave += (_, _) => button.Background = _surface2;
+        button.MouseEnter += (_, _) => button.BorderBrush = _muted2;
+        button.MouseLeave += (_, _) => button.BorderBrush = _line;
         return button;
     }
 
