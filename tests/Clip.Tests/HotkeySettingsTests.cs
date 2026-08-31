@@ -101,4 +101,28 @@ public sealed class HotkeySettingsTests
         Assert.Equal("Esc", hotkeys.CloseClip);
         Assert.Equal("Delete", hotkeys.DeleteSelected);
     }
+
+    [Theory]
+    [InlineData("Enter", "Shift+Enter")]
+    [InlineData("Ctrl+Enter", "Ctrl+Shift+Enter")]
+    [InlineData("Alt+V", "Shift+Alt+V")]
+    // Aliases must come back in the canonical spelling, or the footer cap would not match the
+    // gesture the key handler actually compares against.
+    [InlineData("del", "Shift+Delete")]
+    public void PasteAndStayIsThePasteHotkeyPlusShift(string paste, string expected)
+    {
+        Assert.Equal(expected, MainWindow.PasteAndStayGesture(paste));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("Not+A+Key")]
+    // Already using Shift: there is no free variant left, so no hint and no binding.
+    [InlineData("Ctrl+Shift+V")]
+    [InlineData("Shift+Enter")]
+    public void PasteAndStayIsUnavailableWhenThereIsNoShiftVariantToOffer(string? paste)
+    {
+        Assert.Null(MainWindow.PasteAndStayGesture(paste));
+    }
 }

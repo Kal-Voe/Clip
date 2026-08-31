@@ -667,6 +667,14 @@ internal readonly record struct ClipHotkeyGesture(int WinModifiers, int VirtualK
             return "Esc";
         }
 
+        // Same for Enter, and this one was visible: Key.Enter and Key.Return are one value whose
+        // ToString() is "Return", so Normalize turned the default PasteSelected of "Enter" into
+        // "Return" in settings.json and the footer keycap advertised a key no keyboard prints.
+        if (key == Key.Enter)
+        {
+            return "Enter";
+        }
+
         return key >= Key.A && key <= Key.Z ? key.ToString() : key.ToString();
     }
 }
@@ -1859,16 +1867,24 @@ public partial class MainWindow : Window
     internal static bool ShouldReclaimRowsOnConceal(int materializedRows) =>
         materializedRows > ConcealedRowReclaimThreshold;
 
-    private void ConcealPalette(string reason)
+    /// <param name="resetView">
+    /// False only for the conceal-paste-reopen of a paste-and-stay, where this is one visit to the
+    /// palette rather than the end of one: clearing the search and re-picking the top row would
+    /// throw away the very list the next paste is being aimed at.
+    /// </param>
+    private void ConcealPalette(string reason, bool resetView = true)
     {
         StopOutsideClickWatch();
-        ResetPaletteViewForNextOpen();
-        // A deep scroll materializes hundreds of rows, and a concealed palette would keep that
-        // whole visual tree alive until something else re-rendered. Going dirty makes the next
-        // open rebuild just the initial batch — the same path a fresh open takes.
-        if (ShouldReclaimRowsOnConceal(_rows.Count))
+        if (resetView)
         {
-            _itemsDirtySinceRender = true;
+            ResetPaletteViewForNextOpen();
+            // A deep scroll materializes hundreds of rows, and a concealed palette would keep that
+            // whole visual tree alive until something else re-rendered. Going dirty makes the next
+            // open rebuild just the initial batch — the same path a fresh open takes.
+            if (ShouldReclaimRowsOnConceal(_rows.Count))
+            {
+                _itemsDirtySinceRender = true;
+            }
         }
 
         _paletteOpen = false;
@@ -5466,7 +5482,17 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshCapturePausedBadge()
     {
-        CapturePausedBadge.Visibility = RefreshCapturePaused() ? Visibility.Visible : Visibility.Collapsed;
+        var paused = RefreshCapturePaused();
+        CapturePausedBadge.Visibility = paused ? Visibility.Visible : Visibility.Collapsed;
+        // The footer runs out of room with both up; the XAML next to the hint says which gives way.
+        if (paused)
+        {
+            PasteStayHintPanel.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            UpdateFooterHotkeyHints();
+        }
     }
 
     private void CopySelected()
@@ -5485,10 +5511,26 @@ public partial class MainWindow : Window
     /// <summary>
     /// Pastes the selection. <paramref name="formatOverride"/> forces a format for this one
     /// paste without touching the saved default, which is what "Paste as Plain Text" uses.
+    ///
+    /// <paramref name="keepPaletteOpen"/> is the Shift variant: filling three fields in a form
+    /// otherwise means pressing the open hotkey three times. The palette still has to get out of
+    /// the way for the paste itself — the synthetic Ctrl+V lands in whatever window holds focus,
+    /// and while the palette is up that is the palette — so this is a conceal, the ordinary paste,
+    /// and a reopen, rather than a second paste path. Everything about hitting the target (the
+    /// integrity check, the app override, the verify-and-retry) is the same code either way.
     /// </summary>
-    private void PasteSelected(PasteFormatPreference? formatOverride)
+    private void PasteSelected(PasteFormatPreference? formatOverride, bool keepPaletteOpen = false)
     {
         if (_selected is null) return;
+
+        // Work out the follow-on selection from the list as it stands now: the reopen below can
+        // reload the rows (the paste puts the item back on the clipboard, which the watcher
+        // captures), and the row after this one in *that* list is not the one the user aimed at.
+        // Step clamps at the end, so the last row stays put rather than wrapping to the top —
+        // wrapping would silently re-paste an item that was already used a moment ago.
+        var nextSelection = keepPaletteOpen
+            ? PaletteSelection.Step(VisibleOrder(LastRenderedVisibleItems()), _selected.Id, 1)
+            : null;
         var pasteFormat = formatOverride ?? _settings.DefaultPasteFormat;
         var selected = ClipboardItemForPasteFormat(_selected, pasteFormat);
         var payload = selected.Kind is ClipboardItemKind.Text or ClipboardItemKind.Link or ClipboardItemKind.Color
@@ -5518,7 +5560,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        ConcealPalette("paste");
+        ConcealPalette(keepPaletteOpen ? "paste-stay" : "paste", resetView: !keepPaletteOpen);
         RestoreReturnFocus();
 
         var actionKey = ClipAppOverride.ActionPaste;
@@ -5544,6 +5586,7 @@ public partial class MainWindow : Window
         if (TryPasteDirectlyIntoExplorerSearch(selected, payload?.Text))
         {
             ShellLog.Info($"paste selected id={selected.Id} keys=uia-explorer-search action={actionKey} override={overrideHotkey ?? "none"}");
+            ReopenAfterPasteAndStay(keepPaletteOpen, nextSelection);
             return;
         }
 
@@ -5555,6 +5598,32 @@ public partial class MainWindow : Window
         }
 
         ShellLog.Info($"paste selected id={selected.Id} keys={pasteKeys} action={actionKey} override={overrideHotkey ?? "none"} verified={verified}");
+        ReopenAfterPasteAndStay(keepPaletteOpen, nextSelection);
+    }
+
+    /// <summary>
+    /// Brings the palette back after a paste-and-stay and moves to the row that was next when the
+    /// paste started, so the next Shift+Enter needs no arrow keys. The reopen is a normal
+    /// <see cref="ShowPalette"/>, which recaptures the return focus — by now the foreground window
+    /// is the app just pasted into, which is exactly the target for the next one.
+    /// </summary>
+    private void ReopenAfterPasteAndStay(bool keepPaletteOpen, ClipboardHistoryItem? nextSelection)
+    {
+        if (!keepPaletteOpen)
+        {
+            return;
+        }
+
+        ShowPalette();
+        if (nextSelection is null)
+        {
+            return;
+        }
+
+        // "keyboard" and not "reconcile": this is the user's choice, so a reload triggered by the
+        // clip that the paste itself produced must not quietly replace it with the top row.
+        SelectItem(nextSelection, reason: "keyboard");
+        ScrollRowIntoView(nextSelection.Id);
     }
 
     private ClipboardHistoryItem ClipboardItemForPasteFormat(ClipboardHistoryItem item) =>
@@ -8712,7 +8781,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private SettingsWindow CreateSettingsWindow() => new(_settings, _lastUpdateStatus, ApplyTheme, RefreshClipboardManagerTextTheme, ApplyAppIcon, ApplyRunAtStartup, ApplyHistoryLimit, ApplyMaxItemSize, ApplyUpdateSettings, CheckForUpdatesFromSettings, InstallUpdateAsync, OpenDataFolder, OpenDebugLog, ClearHistory, ChangeClipboardFolder, ResetClipboardFolder, ApplyHotkeys, ApplyPrivacy, ApplyDefaultPasteFormat, ApplyExtractTextFromImages, ApplySourceAppInList, ResetAllSettings, CurrentSettingsPalette)
+    private SettingsWindow CreateSettingsWindow() => new(_settings, _lastUpdateStatus, ApplyTheme, RefreshClipboardManagerTextTheme, ApplyAppIcon, ApplyRunAtStartup, ApplyHistoryLimit, ApplyMaxItemSize, ApplyUpdateSettings, CheckForUpdatesFromSettings, InstallUpdateAsync, OpenDataFolder, OpenDebugLog, ClearHistory, ExportHistory, RestoreHistory, ChangeClipboardFolder, ResetClipboardFolder, ApplyHotkeys, ApplyPrivacy, ApplyDefaultPasteFormat, ApplyExtractTextFromImages, ApplySourceAppInList, ResetAllSettings, CurrentSettingsPalette)
     {
         Owner = this,
     };
@@ -9089,6 +9158,60 @@ public partial class MainWindow : Window
         ShowToast(removed == 1 ? "1 item cleared" : $"{removed} items cleared");
     }
 
+    /// <summary>
+    /// Zips the clipboard folder — whatever it currently is, since it can be relocated — to the
+    /// path the user picked. This is the only way out of Clip for a pinned item or a snippet:
+    /// nothing else in the app can reproduce them once %LocalAppData%\Clip is gone.
+    /// </summary>
+    private void ExportHistory(string zipPath)
+    {
+        try
+        {
+            var exported = ClipboardHistoryBackup.Export(_store.ContentRootPath, zipPath);
+            ShellLog.Info($"history exported items={exported} path={zipPath}");
+            ShowToast(exported == 1 ? "Exported 1 item" : $"Exported {exported} items");
+        }
+        catch (InvalidOperationException ex)
+        {
+            // "Nothing saved yet" is a fact about the store, not a fault; say it plainly.
+            ShellLog.Info($"history export skipped reason={ex.Message}");
+            ShowToast("Nothing to export yet");
+        }
+        catch (Exception ex)
+        {
+            ShellLog.Error(ex, $"history export failed path={zipPath}");
+            ShowToast("Export failed. Log saved.");
+        }
+    }
+
+    private void RestoreHistory(string zipPath)
+    {
+        try
+        {
+            var restored = ClipboardHistoryBackup.Restore(zipPath, _store.ContentRootPath);
+            // The store still holds the pre-restore items in memory, and the next save would put
+            // them straight back over the folder that was just replaced.
+            _store.ReloadFromDisk();
+            _selected = null;
+            _allItems = _store.QueryItemSummaries();
+            _historySummariesPreloaded = true;
+            RenderItems("restore-history");
+            SelectItem(FilteredItems().FirstOrDefault(), "restore-history");
+            ShellLog.Info($"history restored items={restored} path={zipPath}");
+            ShowToast(restored == 1 ? "Restored 1 item" : $"Restored {restored} items");
+        }
+        catch (InvalidDataException ex)
+        {
+            ShellLog.Info($"history restore refused path={zipPath} reason={ex.Message}");
+            ShowToast("Not a Clip export");
+        }
+        catch (Exception ex)
+        {
+            ShellLog.Error(ex, $"history restore failed path={zipPath}");
+            ShowToast("Restore failed. Log saved.");
+        }
+    }
+
     private void OpenDataFolder()
     {
         try
@@ -9174,6 +9297,7 @@ public partial class MainWindow : Window
     private void UpdateFooterHotkeyHints()
     {
         SetFooterHint(PasteHintPanel, PasteHintKey, _settings.Hotkeys.PasteSelected);
+        SetFooterHint(PasteStayHintPanel, PasteStayHintKey, PasteAndStayGesture(_settings.Hotkeys.PasteSelected) ?? string.Empty);
         SetFooterHint(CopyHintPanel, CopyHintKey, _settings.Hotkeys.CopySelected);
         SetFooterHint(ActionsHintPanel, ActionsHintKey, _settings.Hotkeys.OpenActions);
         SetFooterHint(PinHintPanel, PinHintKey, _settings.Hotkeys.PinSelected);
@@ -10176,6 +10300,11 @@ public partial class MainWindow : Window
             PasteSelected(PasteFormatPreference.PlainText);
             e.Handled = true;
         }
+        else if (PasteAndStayGesture(_settings.Hotkeys.PasteSelected) is { } pasteAndStay && MatchesHotkey(e, pasteAndStay))
+        {
+            PasteSelected(null, keepPaletteOpen: true);
+            e.Handled = true;
+        }
         else if (MatchesHotkey(e, _settings.Hotkeys.PasteSelected))
         {
             PasteSelected();
@@ -10264,6 +10393,26 @@ public partial class MainWindow : Window
             ConcealPalette("escape");
             e.Handled = true;
         }
+    }
+
+    /// <summary>
+    /// The gesture for "paste but leave the palette up": the paste hotkey with Shift added, so
+    /// Enter pastes and Shift+Enter pastes and stays. Deriving it beats adding a tenth setting —
+    /// it follows a rebind for free (paste on Ctrl+Enter makes this Ctrl+Shift+Enter) and there is
+    /// no new binding for the user to collide with the others.
+    ///
+    /// Null when paste is unbound, or already uses Shift: there is no Shift left to add, and
+    /// silently binding something else would be worse than not offering it.
+    /// </summary>
+    internal static string? PasteAndStayGesture(string? pasteGesture)
+    {
+        if (!ClipHotkeyGesture.TryParse(pasteGesture, out var gesture) ||
+            gesture.WpfModifiers.HasFlag(ModifierKeys.Shift))
+        {
+            return null;
+        }
+
+        return ClipHotkeyGesture.Format(gesture.WpfModifiers | ModifierKeys.Shift, gesture.WpfKey);
     }
 
     private static bool MatchesHotkey(System.Windows.Input.KeyEventArgs e, string configured)
@@ -11822,6 +11971,9 @@ internal sealed class HotkeyHelpWindow : Window
         {
             (hotkeys.OpenClip, "Open Clip"),
             (hotkeys.PasteSelected, "Paste selected item"),
+            // Derived from the paste binding rather than stored, so it is listed next to it
+            // instead of in the rebindable Shortcuts settings page.
+            (MainWindow.PasteAndStayGesture(hotkeys.PasteSelected) ?? string.Empty, "Paste and keep Clip open on the next item"),
             (hotkeys.CopySelected, "Copy selected item"),
             (hotkeys.PinSelected, "Pin or unpin selected item"),
             (hotkeys.OpenActions, "Open actions"),
@@ -11832,6 +11984,13 @@ internal sealed class HotkeyHelpWindow : Window
             (hotkeys.CloseClip, "Close Clip, close a document preview, or escape modals"),
         })
         {
+            // An unbound action has no key to show, and an empty cap next to a description reads
+            // as a rendering fault rather than as "you turned this one off".
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
             rows.Children.Add(HotkeyRow(key, action, surface, text, muted, line));
         }
 
@@ -12742,6 +12901,8 @@ internal sealed class SettingsWindow : Window
     private readonly Action<Action<ClipUpdateStatus>> _checkForUpdates;
     private readonly Func<ClipUpdateStatus, Task> _installUpdate;
     private readonly Action<bool> _clearHistory;
+    private readonly Action<string> _exportHistory;
+    private readonly Action<string> _restoreHistory;
     private readonly Action _openDataFolder;
     private readonly Action _openDebugLog;
     private readonly Action<string> _changeClipboardFolder;
@@ -12779,7 +12940,7 @@ internal sealed class SettingsWindow : Window
     private Action? _hostClose;
     private string _currentPage = "General";
 
-    public SettingsWindow(ClipShellSettings settings, ClipUpdateStatus updateStatus, Action<ClipThemePreference> applyTheme, Action refreshClipboardManagerTextTheme, Action<AppIconPreference> applyAppIcon, Action<bool> applyRunAtStartup, Action<int?> applyHistoryLimit, Action<long?> applyMaxItemSize, Action<bool, bool> applyUpdateSettings, Action<Action<ClipUpdateStatus>> checkForUpdates, Func<ClipUpdateStatus, Task> installUpdate, Action openDataFolder, Action openDebugLog, Action<bool> clearHistory, Action<string> changeClipboardFolder, Action resetClipboardFolder, Action<ClipHotkeySettings> applyHotkeys, Action<ClipPrivacySettings> applyPrivacy, Action<PasteFormatPreference> applyDefaultPasteFormat, Action<bool> applyExtractTextFromImages, Action<bool> applySourceAppInList, Action resetAllSettings, Func<SettingsPalette> paletteProvider)
+    public SettingsWindow(ClipShellSettings settings, ClipUpdateStatus updateStatus, Action<ClipThemePreference> applyTheme, Action refreshClipboardManagerTextTheme, Action<AppIconPreference> applyAppIcon, Action<bool> applyRunAtStartup, Action<int?> applyHistoryLimit, Action<long?> applyMaxItemSize, Action<bool, bool> applyUpdateSettings, Action<Action<ClipUpdateStatus>> checkForUpdates, Func<ClipUpdateStatus, Task> installUpdate, Action openDataFolder, Action openDebugLog, Action<bool> clearHistory, Action<string> exportHistory, Action<string> restoreHistory, Action<string> changeClipboardFolder, Action resetClipboardFolder, Action<ClipHotkeySettings> applyHotkeys, Action<ClipPrivacySettings> applyPrivacy, Action<PasteFormatPreference> applyDefaultPasteFormat, Action<bool> applyExtractTextFromImages, Action<bool> applySourceAppInList, Action resetAllSettings, Func<SettingsPalette> paletteProvider)
     {
         _settings = settings;
         _updateStatus = updateStatus;
@@ -12793,6 +12954,8 @@ internal sealed class SettingsWindow : Window
         _checkForUpdates = checkForUpdates;
         _installUpdate = installUpdate;
         _clearHistory = clearHistory;
+        _exportHistory = exportHistory;
+        _restoreHistory = restoreHistory;
         _openDataFolder = openDataFolder;
         _openDebugLog = openDebugLog;
         _changeClipboardFolder = changeClipboardFolder;
@@ -13163,6 +13326,7 @@ internal sealed class SettingsWindow : Window
             panel.Children.Add(HistoryLimitRow());
             panel.Children.Add(MaxItemSizeRow());
             panel.Children.Add(ClearHistoryRow());
+            panel.Children.Add(BackupHistoryRow());
             panel.Children.Add(DataFolderRow());
         }
 
@@ -13796,6 +13960,95 @@ internal sealed class SettingsWindow : Window
         actions.Children.Add(clear);
 
         return ControlRow("Clear history", "General keeps pinned items. All removes everything.", actions, minHeight: 78);
+    }
+
+    private Border BackupHistoryRow()
+    {
+        var export = SecondaryButton("Export");
+        export.Width = 86;
+        export.Click += (_, _) => ExportHistoryToFile();
+
+        var restore = SecondaryButton("Restore");
+        restore.Width = 86;
+        restore.Margin = new Thickness(8, 0, 0, 0);
+        restore.Click += (_, _) => RestoreHistoryFromFile();
+
+        var actions = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+        };
+        actions.Children.Add(export);
+        actions.Children.Add(restore);
+
+        return ActionOverDetailRow(
+            "Backup",
+            "Export saves every item and file to a zip. Restore replaces the current history with one.",
+            actions,
+            minHeight: 76);
+    }
+
+    private void ExportHistoryToFile()
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Export Clip history",
+            FileName = $"Clip History {DateTime.Now:yyyy-MM-dd}.zip",
+            DefaultExt = ".zip",
+            Filter = "Clip export (*.zip)|*.zip|All files|*.*",
+            AddExtension = true,
+        };
+
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FileName))
+        {
+            return;
+        }
+
+        _exportHistory(dialog.FileName);
+    }
+
+    private void RestoreHistoryFromFile()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Restore Clip history",
+            DefaultExt = ".zip",
+            Filter = "Clip export (*.zip)|*.zip|All files|*.*",
+            CheckFileExists = true,
+        };
+
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FileName))
+        {
+            return;
+        }
+
+        // Check the file before asking, so the confirmation is never spent on a zip that was
+        // going to be refused anyway.
+        if (!ClipboardHistoryBackup.IsExport(dialog.FileName))
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                "That file is not a Clip history export.",
+                "Restore history",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirm = System.Windows.MessageBox.Show(
+            this,
+            "Replace the current clipboard history with the contents of this export? Everything saved now, including pinned items and snippets, is removed.",
+            "Restore history",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        _restoreHistory(dialog.FileName);
+        ShowPage("History");
     }
 
     private Border DataFolderRow()

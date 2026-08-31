@@ -1699,6 +1699,21 @@ public sealed class ClipboardHistoryStore
         }
     }
 
+    /// <summary>
+    /// Drops the in-memory caches so the next read comes off disk again. Needed after something
+    /// replaced the store's files behind its back — restoring a backup zip — because otherwise the
+    /// first mutation would save the pre-restore items straight back over what was just restored.
+    /// </summary>
+    public void ReloadFromDisk()
+    {
+        lock (_sync)
+        {
+            _itemsCache = null;
+            _summaryItemsCache = null;
+            ClearIndexCaches();
+        }
+    }
+
     private void ClearIndexCaches()
     {
         _topSummaryItemsCache = null;

@@ -6,6 +6,7 @@ namespace Clip.Core;
 [JsonSerializable(typeof(ClipboardHistoryItem))]
 [JsonSerializable(typeof(List<ClipboardHistoryItem>))]
 [JsonSerializable(typeof(ClipboardAssetMetadata))]
+[JsonSerializable(typeof(ClipboardHistoryBackupManifest))]
 internal partial class ClipboardHistoryJsonContext : JsonSerializerContext
 {
 }
