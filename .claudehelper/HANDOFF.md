@@ -3,6 +3,41 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Always centred, and draggable by the top bar (2026-08-31, v1.3.5)
+
+Isaiah: _"a lot of the time it does not open in the center"_, and he wants to drag it by blank space
+in the top bar.
+
+**Centring.** `PositionOnMouseScreen` centred against `GetWindowRect`, i.e. whatever physical size
+the window happened to be at that instant. Since the app went Per-Monitor-V2 DPI aware (1.2.0), a
+window landing on a differently-scaled monitor gets rescaled by Windows, and the measurement raced
+it — the log has the same monitor centring against `win=1200x780` on one open and `win=800x520` on
+the next, so half the time it centred the unscaled size and the palette sat low and right. Fixed by
+deriving the size instead: DIP `Width`/`Height` (which never race) times the **target** monitor's
+scale from `GetDpiForMonitor`, extracted into the testable `MainWindow.CenteredPlacement`. A
+`DpiChanged` handler re-centres once if Windows rescales after the move.
+
+**A trap worth remembering:** the first fix also passed that size to `SetWindowPos`. Do not. WPF
+reads the new physical size back into `Width`/`Height` as DIPs, so on a 150% monitor an 800-DIP
+palette set to 800 physical becomes 533 DIPs and shrinks again every open — the log went
+`win=800x520` → `win=533x347`. `SetWindowPosNoSize` is load-bearing; the computed size is only for
+working out where the top-left goes.
+
+Verified: 9 opens across all three monitors, offset 0,0 every time, size stable at 1200x780.
+
+**Dragging.** The handler existed but the header Grid is inset by `Margin="12,10"`, leaving that band
+dead. Added a full-bleed drag surface behind the row — and the important part: its background is
+**`#01000000`, not `Transparent`**. The palette is a layered window for the acrylic, and a layered
+window is click-through wherever its alpha is zero, so the OS never delivers the click and WPF's
+"Transparent is hit-testable" rule never gets a say. That is why blank top bar did nothing while the
+one spot that dragged turned out to be the painted search field. One step of alpha is invisible over
+the blur and makes the pixels belong to the window. The drag itself is now `WM_NCLBUTTONDOWN` with
+`HTCAPTION` rather than `DragMove()`, which throws if the button is already up and is least reliable
+on exactly this kind of non-activating topmost window.
+
+Note for future testing: synthetic `mouse_event` drags are flaky here (two runs failed on opposite
+spots while the handler fired on all of them). Trust the handler firing plus a real hand.
+
 ## The glass is real now — and how it was measured (2026-08-31, v1.3.1)
 
 Isaiah, on the 1.2.x "glass": _"it did not look like glass, it just like light grey."_ He was right,

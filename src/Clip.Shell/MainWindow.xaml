@@ -297,6 +297,18 @@
                 <RowDefinition x:Name="FooterRowDef" Height="34"/>
             </Grid.RowDefinitions>
 
+            <!-- The drag surface, full-bleed and first so it sits behind everything in the row. The
+                 search field and the chips are in front and take their own clicks, so only blank
+                 space reaches it.
+
+                 #01000000 — alpha 1 of 255 — and NOT Transparent. The palette is a layered window
+                 for the acrylic, and a layered window is click-through wherever its alpha is zero:
+                 the OS never delivers the click at all, so WPF's "Transparent is hit-testable" rule
+                 never gets a say. Measured: grabbing blank top bar did nothing, while the one spot
+                 that dragged turned out to be the painted search field. One step of alpha is
+                 invisible over the blur and is enough to make the pixels belong to the window. -->
+            <Border Grid.Row="0" Background="#01000000" MouseLeftButtonDown="OnChromeMouseDown"/>
+
             <!-- Transparent, never Bg: the Shell below already paints the Bg sheet, so painting it
                  again here stacked a second 65% layer inset by the margin and squared off at the
                  corners — the "dark rectangle behind the controls". Transparent and not null on

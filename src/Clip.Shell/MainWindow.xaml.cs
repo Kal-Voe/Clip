@@ -1069,6 +1069,20 @@ public partial class MainWindow : Window
             // opaque palette; now that the window is real, re-theme so the acrylic blur
             // (if enabled and supported) can actually take.
             ApplyTheme(_settings.Theme, save: false);
+
+            // Landing on a monitor with a different scale makes Windows resize the palette after
+            // the move, anchored wherever it decides — which un-centres what was just centred.
+            // Re-running the placement once the new size is real is what makes "always centred"
+            // true across mixed-DPI monitors. It cannot loop: the palette is already on the
+            // cursor's monitor by then, so re-centring there changes no scale.
+            DpiChanged += (_, _) =>
+            {
+                if (IsVisible && !_isMediaFullScreen && !_expandedWindowResized)
+                {
+                    PositionOnMouseScreen(log: false);
+                }
+            };
+
             _lastClipboardSequenceNumber = GetClipboardSequenceNumber();
             var hotkey = false;
             var listener = false;
@@ -8324,14 +8338,90 @@ public partial class MainWindow : Window
         var work = info.Work;
         var workWidth = work.Right - work.Left;
         var workHeight = work.Bottom - work.Top;
-        var windowWidth = windowRect.Right - windowRect.Left;
-        var windowHeight = windowRect.Bottom - windowRect.Top;
-        var x = work.Left + Math.Max(0, (workWidth - windowWidth) / 2);
-        var y = work.Top + Math.Max(0, (workHeight - windowHeight) / 2);
+
+        // Size the window for the TARGET monitor rather than measuring whatever it happens to be
+        // right now. Since the app went Per-Monitor-V2 DPI aware, moving between monitors of
+        // different scale makes Windows rescale the window, and GetWindowRect raced that: the log
+        // showed the same monitor centring against win=1200x780 on one open and win=800x520 on the
+        // next, so half the time it centred the unscaled size and the palette landed low and right.
+        // Width/Height are DIPs and never race; the target monitor's scale is a property of the
+        // monitor. Placing and sizing in one call means there is no in-between frame to rescale.
+        var scale = MonitorScale(monitor);
+        var (x, y, windowWidth, windowHeight) = CenteredPlacement(
+            work.Left,
+            work.Top,
+            workWidth,
+            workHeight,
+            Width,
+            Height,
+            scale,
+            windowRect.Right - windowRect.Left,
+            windowRect.Bottom - windowRect.Top);
+        // NoSize is load-bearing. Passing a size here looks harmless and is not: WPF reads the new
+        // physical size back into Width/Height as DIPs, so on a 150% monitor an 800-DIP palette set
+        // to 800 physical becomes 533 DIPs, and every open shrinks it again. The size is only ever
+        // computed to place the window; Windows applies the real one when it rescales for the
+        // target monitor.
         SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, SetWindowPosNoSize | SetWindowPosNoZOrder | SetWindowPosNoActivate);
         if (log)
         {
-            ShellLog.Info($"position(win32) cursor={cursor.X},{cursor.Y} work={work.Left},{work.Top} {workWidth}x{workHeight} win={windowWidth}x{windowHeight} -> {x},{y}");
+            ShellLog.Info($"position(win32) cursor={cursor.X},{cursor.Y} work={work.Left},{work.Top} {workWidth}x{workHeight} scale={scale:0.##} win={windowWidth}x{windowHeight} -> {x},{y}");
+        }
+    }
+
+    /// <summary>
+    /// Where and how big the palette goes to sit centred on one monitor's work area, all in that
+    /// monitor's physical pixels.
+    ///
+    /// The size comes from the DIP size times the target monitor's scale, never from measuring the
+    /// window, because the measurement races Per-Monitor-V2 rescaling — that race is what put the
+    /// palette off-centre on roughly every other open. <paramref name="measuredWidth"/> and
+    /// <paramref name="measuredHeight"/> are only the fallback for before the first layout, when
+    /// Width/Height are still NaN.
+    ///
+    /// The returned size is what the window is ABOUT to be once Windows rescales it for that
+    /// monitor; it is there to place the window, not to resize it. Actually applying it would feed
+    /// the physical size back into WPF's DIP Width/Height and shrink the palette on every open.
+    /// </summary>
+    internal static (int X, int Y, int Width, int Height) CenteredPlacement(
+        int workLeft,
+        int workTop,
+        int workWidth,
+        int workHeight,
+        double dipWidth,
+        double dipHeight,
+        double scale,
+        int measuredWidth,
+        int measuredHeight)
+    {
+        var width = double.IsNaN(dipWidth) || dipWidth <= 0 ? measuredWidth : (int)Math.Round(dipWidth * scale);
+        var height = double.IsNaN(dipHeight) || dipHeight <= 0 ? measuredHeight : (int)Math.Round(dipHeight * scale);
+
+        // A palette wider than the work area is pinned to the top-left corner rather than hung off
+        // the left edge, which is what a negative half-difference would do.
+        var x = workLeft + Math.Max(0, (workWidth - width) / 2);
+        var y = workTop + Math.Max(0, (workHeight - height) / 2);
+        return (x, y, width, height);
+    }
+
+    /// <summary>
+    /// The target monitor's scale factor (1.5 at 150%), read from the monitor itself rather than
+    /// from this window — the window may still be on the old monitor, at the old scale, which is
+    /// the whole reason the centring used to be wrong. Falls back to 1.0 on the pre-8.1 machines
+    /// where GetDpiForMonitor is missing, which is also the only place it is genuinely always 96.
+    /// </summary>
+    private static double MonitorScale(IntPtr monitor)
+    {
+        try
+        {
+            return GetDpiForMonitor(monitor, MonitorDpiEffective, out var dpiX, out _) == 0 && dpiX > 0
+                ? dpiX / 96.0
+                : 1.0;
+        }
+        catch (Exception ex)
+        {
+            ShellLog.Error(ex, "monitor dpi lookup failed");
+            return 1.0;
         }
     }
 
@@ -9638,11 +9728,39 @@ public partial class MainWindow : Window
         ShowStyledMenu(actions, FilesFilterShell);
     }
 
+    /// <summary>
+    /// Drag the palette by any blank space in the top bar.
+    ///
+    /// This hands the drag to the OS (WM_NCLBUTTONDOWN with HTCAPTION) instead of calling
+    /// DragMove(). DragMove throws if the button is already up by the time it runs — a real race on
+    /// a flick of the wrist — and this window is ShowActivated=False and topmost, which is exactly
+    /// the shape DragMove is least reliable on. The non-client drag loop is what a title bar
+    /// actually uses, so it also gets snap and the modifier behaviours for free.
+    /// </summary>
     private void OnChromeMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton == MouseButton.Left)
+        if (e.ChangedButton != MouseButton.Left)
         {
-            DragMove();
+            return;
+        }
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            // WPF holds the mouse capture from the button-down; the OS loop needs it released or
+            // the drag never starts.
+            _ = ReleaseCapture();
+            _ = SendMessage(hwnd, WmNcLButtonDown, new IntPtr(HtCaption), IntPtr.Zero);
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            ShellLog.Error(ex, "palette drag failed");
         }
     }
 
@@ -11194,6 +11312,12 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)] private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern int GetWindowTextLength(IntPtr hWnd);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+    [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+    private const int MonitorDpiEffective = 0;
+    [DllImport("user32.dll")] private static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
+    private const int WmNcLButtonDown = 0x00A1;
+    private const int HtCaption = 2;
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
 
     /// <summary>
