@@ -134,7 +134,7 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource Text}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
             <Setter Property="CaretBrush" Value="{DynamicResource TextCursor}"/>
             <Setter Property="SelectionBrush" Value="{DynamicResource TextSelection}"/>
             <Setter Property="SelectionOpacity" Value="0.4"/>
@@ -146,7 +146,7 @@
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
-            <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -229,7 +229,7 @@
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Background" Value="{DynamicResource AccentSoft}"/>
             <Setter Property="Foreground" Value="{DynamicResource Text}"/>
-            <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -267,7 +267,7 @@
              four different things compete for "primary" at once, so nothing read as primary. -->
         <Style x:Key="HotkeyText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource Muted2}"/>
-            <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -408,6 +408,22 @@
                                       PreviewMouseWheel="OnListWheel">
                             <StackPanel x:Name="ItemsHost" ClipToBounds="True"/>
                         </ScrollViewer>
+                        <!-- The one thing pinning could not do: start an item that was never a
+                             copy. It floats at the top right of the list rather than in the footer,
+                             where it read as app chrome; here it sits with the list it adds to.
+                             Outside the ScrollViewer so it stays put while the list scrolls, and
+                             small and muted so it does not compete with the rows. -->
+                        <Button x:Name="NewSnippetButton"
+                                Style="{StaticResource IconButton}"
+                                Click="OnNewSnippetClick"
+                                ToolTip="New Snippet"
+                                Width="22"
+                                Height="22"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Margin="0,7,10,0">
+                            <Image x:Name="NewSnippetIcon" Width="13" Height="13" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Button>
                         <!-- Shown by UpdateEmptyState when a render leaves no rows: a blank column
                              next to a still-populated preview read as a bug, not as "no results". -->
                         <TextBlock x:Name="EmptyStateText"
@@ -456,7 +472,7 @@
                                 Padding="0,2,0,0"
                                 ClipToBounds="True">
                             <Grid x:Name="PreviewHost">
-                                <TextBox x:Name="TextPreview" Style="{StaticResource CleanTextBox}" TextWrapping="Wrap" AcceptsReturn="True" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" FontSize="13" FontFamily="JetBrains Mono, Cascadia Mono, Consolas">
+                                <TextBox x:Name="TextPreview" Style="{StaticResource CleanTextBox}" TextWrapping="Wrap" AcceptsReturn="True" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" FontSize="13" FontFamily="Cascadia Mono, Consolas">
                                     <!-- Explicit template so the overlay pill is guaranteed - implicit
                                          window styles never reach a TextBox's internal scrollbar, which
                                          is how the stock 17px Windows bar survived every restyle. -->
@@ -525,10 +541,6 @@
                         </Border>
                         <TextBlock Text="Paste" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
                     </StackPanel>
-                    <!-- The six hints plus the two icon buttons come to ~730 of the 776 available,
-                         so this one gives way to the capture-paused badge when that appears (see
-                         RefreshCapturePausedBadge): a paused capture is the more urgent message,
-                         and both together would push the Settings button off the right edge. -->
                     <StackPanel x:Name="PasteStayHintPanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                         <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
                             <TextBlock x:Name="PasteStayHintKey" Text="Shift+Enter" Style="{StaticResource HotkeyText}"/>
@@ -548,17 +560,6 @@
                                 Background="{DynamicResource Surface}">
                             <TextBlock Text="Capture paused" Foreground="{DynamicResource Danger}" FontSize="12" FontWeight="Medium"/>
                         </Border>
-                        <!-- The one thing pinning could not do: start an item that was never a
-                             copy. It sits next to Settings because the footer's other slots are
-                             keycap hints, which are reference labels rather than controls. -->
-                        <Button x:Name="NewSnippetButton"
-                                Style="{StaticResource IconButton}"
-                                Click="OnNewSnippetClick"
-                                ToolTip="New Snippet"
-                                Margin="0,0,2,0"
-                                VerticalAlignment="Center">
-                            <Image x:Name="NewSnippetIcon" Width="16" Height="16" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                        </Button>
                         <Button x:Name="SettingsButton"
                                 Style="{StaticResource IconButton}"
                                 Click="OnSettingsClick"

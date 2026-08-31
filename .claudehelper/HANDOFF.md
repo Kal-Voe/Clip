@@ -3,6 +3,23 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Native type, and the + moved onto the list (2026-08-31, v1.4.2)
+
+**Fonts: stripped, not bundled.** The UI asked for Inter and JetBrains Mono and shipped neither, so
+every machine -- including Isaiah's, checked with InstalledFontCollection -- was already rendering
+Segoe UI Variable Text and Cascadia Mono. Bundling would have changed the look of the whole app for
+him rather than restoring an intended one. Both fallbacks ship with Windows, so users already see
+what he sees, and the native type suits an app whose whole aesthetic is now acrylic sitting beside
+the system flyouts. The stacks name only what exists; nothing changed visually.
+
+**New Snippet moved** from the footer's bottom right to a small muted + at the top right of the list
+column, level with the TODAY header, on request -- it belongs with the list it adds to rather than
+in the app chrome. It sits outside the ScrollViewer so it stays put while the list scrolls.
+
+**Dropped a now-pointless concession:** the capture-paused badge used to hide the Paste & stay hint
+because six hints plus two buttons overflowed the bar. With the footer down to two hints they both
+fit, so nothing hides any more.
+
 ## Footer trimmed, transforms always shown, and the resize found (2026-08-31, v1.4.1)
 
 Isaiah's round of feedback on 1.4.0, and one finding that was not Clip's fault.

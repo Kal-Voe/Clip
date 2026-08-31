@@ -5503,15 +5503,9 @@ public partial class MainWindow : Window
     {
         var paused = RefreshCapturePaused();
         CapturePausedBadge.Visibility = paused ? Visibility.Visible : Visibility.Collapsed;
-        // The footer runs out of room with both up; the XAML next to the hint says which gives way.
-        if (paused)
-        {
-            PasteStayHintPanel.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            UpdateFooterHotkeyHints();
-        }
+        // Paste & stay used to give way to this badge because six hints plus the buttons overflowed
+        // the bar. The footer is down to two hints now, so both fit and neither has to hide.
+        UpdateFooterHotkeyHints();
     }
 
     private void CopySelected()
@@ -6522,7 +6516,7 @@ public partial class MainWindow : Window
             Background = WpfBrushes.Transparent,
             Foreground = foreground,
             BorderThickness = new Thickness(0),
-            FontFamily = new System.Windows.Media.FontFamily("JetBrains Mono, Cascadia Mono, Consolas"),
+            FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono, Consolas"),
             FontSize = 13,
             CaretBrush = textCursor,
             SelectionBrush = (WpfBrush)FindResource("TextSelection"),
@@ -15649,7 +15643,7 @@ internal sealed class TextEditWindow : Window
         _box.Background = WpfBrushes.Transparent;
         _box.Foreground = foreground;
         _box.BorderThickness = new Thickness(0);
-        _box.FontFamily = new System.Windows.Media.FontFamily("JetBrains Mono, Cascadia Mono, Consolas");
+        _box.FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono, Consolas");
         _box.FontSize = 13;
         _box.CaretBrush = textCursor;
         _box.SelectionBrush = selectionBrush;
