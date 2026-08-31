@@ -82,6 +82,17 @@ internal sealed class ClipShellSettings
     public bool ShowSourceAppInList { get; set; } = true;
 
     /// <summary>
+    /// Put a real file in the drag as well as the text, so dropping a text or link clip on the
+    /// desktop saves a .txt or .url.
+    ///
+    /// Off by default, and the default is the interesting part. Apps that accept both a file and
+    /// text from one drag mostly prefer the file: VS Code opens it, Slack and Gmail attach it.
+    /// Turning this on therefore buys the occasional drop onto the desktop at the cost of the
+    /// everyday drop into a text field, so the everyday one is what is shipped switched on.
+    /// </summary>
+    public bool DragClipsAsFiles { get; set; }
+
+    /// <summary>
     /// The acrylic glass look: real blur-behind sampled from the desktop, with the interior zones
     /// as light tints over it. On by default. It was off for 1.2.4 only because 1.2.0-1.2.3 shipped
     /// a DWM backdrop that painted a flat grey sheet instead of blurring anything — see
@@ -128,6 +139,7 @@ internal sealed class ClipShellSettings
         InstallUpdatesAutomatically = true;
         ExtractTextFromImages = false;
         ShowSourceAppInList = true;
+        DragClipsAsFiles = false;
         TranslucentBackground = true;
         CapturePaused = false;
         ClipboardFolderPath = null;
@@ -4502,10 +4514,33 @@ public partial class MainWindow : Window
             }
         }
 
-        var paths = payload.FilePaths.Where(p => File.Exists(p) || Directory.Exists(p)).ToArray();
-        if (paths.Length > 0)
+        var paths = payload.FilePaths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
+
+        if (item.Kind == ClipboardItemKind.Link && payload.Text is { Text.Length: > 0 } link)
         {
-            data.SetData(System.Windows.DataFormats.FileDrop, paths);
+            // CFSTR_INETURLW, the format every browser puts on a dragged link. Explorer turns it
+            // into a real .url shortcut on drop, and no text target has ever asked for it, so
+            // unlike a FileDrop it costs the common case nothing — which is why it is offered
+            // unconditionally while the file below is not. Raw bytes through a MemoryStream
+            // because the shell wants a null-terminated wide string in an HGLOBAL; a plain string
+            // would be handed over as whatever WPF chooses to serialise it into.
+            data.SetData(
+                "UniformResourceLocatorW",
+                new MemoryStream(Encoding.Unicode.GetBytes(link.Text.Trim() + "\0")));
+        }
+
+        // Only when the item is not already files, and only when the user has asked for it: a
+        // FileDrop on a text clip changes what every other app does with the drag. See
+        // MaterializeDragFile.
+        if (paths.Count == 0 && _settings.DragClipsAsFiles && payload.Text is { } fileText &&
+            MaterializeDragFile(item.Kind, fileText.Text) is { } materialized)
+        {
+            paths.Add(materialized);
+        }
+
+        if (paths.Count > 0)
+        {
+            data.SetData(System.Windows.DataFormats.FileDrop, paths.ToArray());
         }
 
         if (payload.BitmapPath is { } bitmapPath && File.Exists(bitmapPath))
@@ -4524,6 +4559,38 @@ public partial class MainWindow : Window
         }
 
         return data;
+    }
+
+    /// <summary>
+    /// Writes the clip out as a real file and returns its path, so a drop on the desktop leaves a
+    /// .txt or a .url behind the way a dropped image leaves a .png.
+    ///
+    /// Gated on a setting, and off by default, because the FileDrop this produces is not free.
+    /// Plenty of apps prefer a file to text when a drag offers both — VS Code opens it in a new
+    /// tab, Slack and Gmail attach it — so switching this on trades "drag text into a field",
+    /// which is the everyday gesture, for "drag text onto the desktop", which is the rare one.
+    /// Format order cannot rescue that: WPF's DataObject keeps its formats in a hash table, so
+    /// the order the shell enumerates them in is not insertion order and is not even stable
+    /// between runs, and the apps that matter query for CF_HDROP by name regardless.
+    /// </summary>
+    private static string? MaterializeDragFile(ClipboardItemKind kind, string text)
+    {
+        try
+        {
+            var folder = ClipStoragePaths.DragFilesFolderPath;
+
+            // Swept here rather than on a timer: a drag is the only thing that ever puts a file
+            // in this folder, so it is the only moment the folder can have grown.
+            ClipboardDragFile.CleanStale(folder, DateTime.UtcNow);
+            return ClipboardDragFile.Materialize(folder, kind, text);
+        }
+        catch (Exception ex)
+        {
+            // A file we could not write is a missing convenience. It is never a reason to fail
+            // the drag, which still carries the text.
+            ShellLog.Error(ex, $"drag file materialise failed kind={kind}");
+            return null;
+        }
     }
 
     private void OnTitleTextMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -13737,6 +13804,7 @@ internal sealed class SettingsWindow : Window
             panel.Children.Add(DefaultPasteFormatRow());
             panel.Children.Add(ExtractTextFromImagesRow());
             panel.Children.Add(SourceAppInListRow());
+            panel.Children.Add(DragClipsAsFilesRow());
         }
 
         if (string.Equals(page, "Appearance", StringComparison.OrdinalIgnoreCase))
@@ -14655,6 +14723,33 @@ internal sealed class SettingsWindow : Window
 
                     _settings.ShowSourceAppInList = enabled;
                     _applySourceAppInList(enabled);
+                }));
+    }
+
+    /// <summary>
+    /// No apply callback and no delegate through the constructor, unlike its neighbours: the drag
+    /// reads this straight off the shared settings object when a drag starts, so saving it is the
+    /// whole of applying it.
+    /// </summary>
+    private Border DragClipsAsFilesRow()
+    {
+        return ControlRow(
+            "Drag clips out as files",
+            "Dropping a text or link clip on the desktop leaves a .txt or .url file. Off by default: with this on, apps that prefer files — VS Code, Slack — take the file instead of the text.",
+            StyledDropdown(
+                _settings.DragClipsAsFiles ? "On" : "Off",
+                new[] { "Off", "On" },
+                selected =>
+                {
+                    var enabled = string.Equals(selected, "On", StringComparison.OrdinalIgnoreCase);
+                    if (enabled == _settings.DragClipsAsFiles)
+                    {
+                        return;
+                    }
+
+                    _settings.DragClipsAsFiles = enabled;
+                    _settings.Save();
+                    ShellLog.Info($"drag clips as files set enabled={enabled}");
                 }));
     }
 

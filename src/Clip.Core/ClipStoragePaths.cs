@@ -29,6 +29,14 @@ public static class ClipStoragePaths
 
     public static string WebView2UserDataFolderPath => Path.Combine(Root, "WebView2");
 
+    /// <summary>
+    /// Scratch space for the files a drag materialises so a drop can leave a real file behind.
+    /// Under the Clip tree rather than %TEMP% so it is one folder Clip owns and sweeps itself —
+    /// see <see cref="ClipboardDragFile.CleanStale"/> — instead of adding to the pile Windows
+    /// never quite gets round to clearing.
+    /// </summary>
+    public static string DragFilesFolderPath => Path.Combine(Root, "DragFiles");
+
     public static string EffectiveClipboardFolderPath()
     {
         var configured = ConfiguredClipboardFolderPath();
