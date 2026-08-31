@@ -66,10 +66,20 @@ by search; capture ignores the password-manager clipboard exclusion formats (pri
 lines to fix in both capture paths); the crispness gap vs asyar/Raycast is WPF's
 `Ideal`+`Grayscale` text mode (switch to `Display` at window level) plus missing PerMonitorV2 DPI
 manifest; history.json writes are non-atomic with no corruption recovery and racing writers; the
-updater force-kills every WebView2 process on the machine. Acrylic/mica is viable today via
-`DWMWA_SYSTEMBACKDROP_TYPE` because the window is already non-layered + DWM-rounded — never use
-`AllowsTransparency` (kills backdrops and ClearType). asyar = Tauri 2 + Svelte in the OS webview,
+updater force-kills every WebView2 process on the machine. asyar = Tauri 2 + Svelte in the OS webview,
 transparency via the `window-vibrancy` crate (HudWindow material on macOS, acrylic→mica on Windows).
+
+**CORRECTION (2026-08-31), and this one matters because it was stated here as a rule.** The audit's
+"acrylic via `DWMWA_SYSTEMBACKDROP_TYPE`, never use `AllowsTransparency`" advice was wrong on both
+halves, and following it is what shipped the 1.2.0-1.2.3 look Isaiah rejected as "not glass, just
+light grey". Measured on his machine (26200, 150% DPI) against a RED|BLUE edge behind the window:
+DWMSBT_TRANSIENTWINDOW returns hr=0 and paints a flat `D3D3D3` over the whole window, sampling
+nothing behind it — it is inert here. The thing that actually blurs is
+`SetWindowCompositionAttribute` + `ACCENT_ENABLE_ACRYLICBLURBEHIND` on a **layered** window, which
+is what `window-vibrancy`'s `apply_acrylic` — and therefore asyar — has been calling all along. The
+ClearType objection is void for this window specifically: it sets
+`TextOptions.TextRenderingMode="Grayscale"` deliberately, so there is no subpixel rendering to lose.
+See `src/Clip.Shell/PaletteBackdrop.cs` for the scanline numbers.
 
 ### Next steps
 
