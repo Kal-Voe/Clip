@@ -412,7 +412,8 @@
                                  leaves its starting row immediately, and the moves that decide
                                  the drag are then raised by the rows it passes over. -->
                             <StackPanel x:Name="ItemsHost" ClipToBounds="True" Margin="0,0,0,8"
-                                        MouseMove="OnListMouseMove"/>
+                                        MouseMove="OnListMouseMove"
+                                        MouseLeftButtonUp="OnListMouseUp"/>
                         </ScrollViewer>
                         <!-- The one thing pinning could not do: start an item that was never a
                              copy. It floats at the top right of the list rather than in the footer,
@@ -477,11 +478,17 @@
                             <Button x:Name="OpenButton" Grid.Column="3" Content="Open" Style="{StaticResource MiniButton}" Click="OnOpenClick" MinWidth="74" Margin="16,0,0,0"/>
                         </Grid>
 
+                        <!-- The preview starts the same drag a row does, for whatever item is
+                             previewed. Bubbling, not tunnelling: the text preview is a real
+                             TextBox and handles its own button-down, so a press in it never
+                             reaches here and selecting text stays selecting text. -->
                         <Border Grid.Row="2"
                                 Background="Transparent"
                                 BorderThickness="0"
                                 Padding="0,2,0,0"
-                                ClipToBounds="True">
+                                ClipToBounds="True"
+                                MouseLeftButtonDown="OnPreviewSurfaceMouseDown"
+                                MouseMove="OnPreviewSurfaceMouseMove">
                             <Grid x:Name="PreviewHost">
                                 <TextBox x:Name="TextPreview" Style="{StaticResource CleanTextBox}" TextWrapping="Wrap" AcceptsReturn="True" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" FontSize="13" FontFamily="Cascadia Mono, Consolas">
                                     <!-- Explicit template so the overlay pill is guaranteed - implicit

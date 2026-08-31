@@ -53,4 +53,50 @@ public static class ClipboardDragData
                 return ClipboardDragPayload.Empty;
         }
     }
+
+    /// <summary>
+    /// The payload for a drag of several rows at once. A drag carries exactly one data object
+    /// however many rows started it, so every item's contribution is folded into one here.
+    ///
+    /// FileDrop is the union of every path the selection offers, in the order the rows are on
+    /// screen, which is what makes dragging three screenshots into a folder land three files.
+    /// The text side is those items' texts joined by newlines, and always plain: HTML and RTF are
+    /// whole documents with their own headers, and gluing two of them together produces a third
+    /// that is neither. A mixed selection therefore hands a file target the files and a text
+    /// target the texts, each getting the part of the selection it can take rather than the drag
+    /// refusing to start. The bitmap is dropped: CF_BITMAP holds one image, and picking which of
+    /// several it should be would be a guess — several images travel as files instead.
+    /// </summary>
+    public static ClipboardDragPayload CreateMany(
+        IReadOnlyList<ClipboardHistoryItem> items,
+        PasteFormatPreference preference)
+    {
+        // One item is the ordinary drag, rich formats and bitmap included; nothing above applies.
+        if (items.Count == 1)
+        {
+            return Create(items[0], preference);
+        }
+
+        var paths = new List<string>();
+        var texts = new List<string>();
+        foreach (var item in items)
+        {
+            var payload = Create(item, preference);
+            paths.AddRange(payload.FilePaths);
+            if (payload.Text is { Text.Length: > 0 } text)
+            {
+                texts.Add(text.Text);
+            }
+        }
+
+        if (paths.Count == 0 && texts.Count == 0)
+        {
+            return ClipboardDragPayload.Empty;
+        }
+
+        return new ClipboardDragPayload(
+            texts.Count == 0 ? null : new ClipboardPastePayload(string.Join(Environment.NewLine, texts), null, null),
+            paths,
+            null);
+    }
 }

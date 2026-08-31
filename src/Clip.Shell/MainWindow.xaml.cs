@@ -769,6 +769,118 @@ internal static class PaletteSelection
     }
 }
 
+/// <summary>
+/// Which rows a press leaves selected once Ctrl and Shift are in play.
+///
+/// Pure, and separated from the palette for the usual reason: this is the part with rules worth
+/// arguing about, and it is decidable without a desktop. Two invariants hold the rest of the
+/// palette together and are why this is not simply Explorer's model:
+///
+/// The previewed row is always in the set. Everything downstream — the preview pane, Enter, the
+/// action menu — follows one item, so a Ctrl+click that would deselect the row being previewed is
+/// refused rather than leaving the pane showing something the list says is not selected.
+/// Ctrl+clicking any other member still removes it, which is the case that matters (trimming one
+/// row out of a range you just pulled).
+///
+/// A plain press on a row that is already part of a multi-selection keeps the set instead of
+/// collapsing to that one row, or dragging a selection would be impossible: the press that starts
+/// the drag would have thrown the selection away before the drag began. The collapse is deferred
+/// to the release, which is exactly what a file manager does — click a member of a selection and
+/// it collapses, drag one and the whole set comes.
+/// </summary>
+internal static class PaletteMultiSelection
+{
+    /// <summary>
+    /// The outcome of a press: the rows now selected (in on-screen order), the anchor a later
+    /// Shift+click extends from, the row the preview should follow, and whether the caller owes a
+    /// collapse to <see cref="Result.PreviewId"/> if the press turns out to be a click.
+    /// </summary>
+    internal readonly record struct Result(
+        IReadOnlyList<string> Ids,
+        string AnchorId,
+        string PreviewId,
+        bool CollapseOnRelease);
+
+    public static Result Press(
+        IReadOnlyList<string> visibleOrder,
+        IReadOnlyCollection<string> selectedIds,
+        string? anchorId,
+        string? previewId,
+        string pressedId,
+        bool ctrl,
+        bool shift)
+    {
+        var current = new HashSet<string>(selectedIds, StringComparer.OrdinalIgnoreCase);
+        // A row the current filter no longer shows cannot be part of a selection the user can see,
+        // and dragging one would hand the target something the list is not showing.
+        current.IntersectWith(visibleOrder);
+
+        var anchor = IndexOf(visibleOrder, anchorId);
+        var pressed = IndexOf(visibleOrder, pressedId);
+        if (shift && anchor >= 0 && pressed >= 0)
+        {
+            // Shift replaces rather than unions, Ctrl+Shift included: one range at a time is the
+            // rule that never leaves the user with a selection they cannot see the edges of.
+            var range = new List<string>();
+            for (var i = Math.Min(anchor, pressed); i <= Math.Max(anchor, pressed); i++)
+            {
+                range.Add(visibleOrder[i]);
+            }
+
+            return new Result(range, anchorId!, pressedId, false);
+        }
+
+        if (ctrl && current.Contains(pressedId))
+        {
+            if (previewId is null || Same(pressedId, previewId))
+            {
+                // The previewed row cannot be deselected — see the class comment.
+                return new Result(Ordered(visibleOrder, current), pressedId, pressedId, false);
+            }
+
+            current.Remove(pressedId);
+            return new Result(Ordered(visibleOrder, current), pressedId, previewId, false);
+        }
+
+        if (ctrl)
+        {
+            current.Add(pressedId);
+            return new Result(Ordered(visibleOrder, current), pressedId, pressedId, false);
+        }
+
+        if (current.Count > 1 && current.Contains(pressedId))
+        {
+            return new Result(Ordered(visibleOrder, current), pressedId, pressedId, true);
+        }
+
+        return new Result([pressedId], pressedId, pressedId, false);
+    }
+
+    private static List<string> Ordered(IReadOnlyList<string> visibleOrder, HashSet<string> ids) =>
+        visibleOrder.Where(ids.Contains).ToList();
+
+    private static int IndexOf(IReadOnlyList<string> visibleOrder, string? id)
+    {
+        if (id is null)
+        {
+            return -1;
+        }
+
+        for (var i = 0; i < visibleOrder.Count; i++)
+        {
+            if (Same(visibleOrder[i], id))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool Same(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+}
+
 
 public partial class MainWindow : Window
 {
@@ -902,6 +1014,22 @@ public partial class MainWindow : Window
     private IReadOnlyList<ClipboardHistoryItem> _allItems = [];
     private IReadOnlyList<ClipboardHistoryItem>? _renderedVisibleItems;
     private ClipboardHistoryItem? _selected;
+
+    /// <summary>
+    /// Rows selected alongside <see cref="_selected"/>, which is still the one item the preview,
+    /// Enter and the action menu follow. Empty means the selection is just that one row, so only
+    /// a genuine multi-selection is ever in here.
+    /// </summary>
+    private readonly HashSet<string> _multiSelection = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The row a Shift+click extends its range from.</summary>
+    private string? _selectionAnchorId;
+
+    /// <summary>
+    /// A plain press on a row that was already part of a multi-selection, owed a collapse to that
+    /// one row when the button comes up without a drag having started. See PaletteMultiSelection.
+    /// </summary>
+    private string? _pendingCollapseId;
     private ClipboardHistoryItem? _pendingTextClipboardItem;
     private DateTime _pendingTextClipboardItemAt;
     private uint _lastClipboardSequenceNumber;
@@ -3873,9 +4001,9 @@ public partial class MainWindow : Window
                 case TextBlock text:
                     text.Foreground = IsPrimaryClipboardText(text) ? (WpfBrush)FindResource("Text") : (WpfBrush)FindResource("Muted");
                     break;
-                case Border { Tag: ClipboardHistoryItem rowItem } row when rowItem.Id == _selected?.Id:
-                    row.Background = (WpfBrush)FindResource("Selected");
-                    row.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
+                case Border { Tag: ClipboardHistoryItem rowItem } row
+                    when rowItem.Id == _selected?.Id || _multiSelection.Contains(rowItem.Id):
+                    PaintRowSelection(row, rowItem.Id);
                     break;
             }
 
@@ -4050,14 +4178,13 @@ public partial class MainWindow : Window
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 7, 10, 7),
             Margin = new Thickness(6, 0, 6, 0),
-            Background = item.Id == _selected?.Id ? (WpfBrush)FindResource("Selected") : WpfBrushes.Transparent,
-            BorderBrush = item.Id == _selected?.Id ? (WpfBrush)FindResource("SelectedBorder") : WpfBrushes.Transparent,
             // Constant 1px border on every row; selection swaps only the brush. Toggling the
             // thickness 0<->1 shifted each row's content by a pixel as the selection moved.
             BorderThickness = new Thickness(1),
             ClipToBounds = true,
             Tag = item,
         };
+        PaintRowSelection(row, item.Id);
 
         var grid = new Grid { ClipToBounds = true };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
@@ -4164,17 +4291,30 @@ public partial class MainWindow : Window
             if (e.ClickCount >= 2)
             {
                 // Disarm: the first click of the pair armed a drag, and this one is a paste.
-                _rowDragOrigin = null;
+                _dragOrigin = null;
+                _pendingCollapseId = null;
                 SelectItem(item, "double-click-paste");
                 PasteSelected();
                 e.Handled = true;
                 return;
             }
 
-            SelectItem(item, "click");
+            var result = PaletteMultiSelection.Press(
+                VisibleOrder(LastRenderedVisibleItems()).Select(visible => visible.Id).ToList(),
+                SelectedIds(),
+                _selectionAnchorId,
+                _selected?.Id,
+                item.Id,
+                Keyboard.Modifiers.HasFlag(ModifierKeys.Control),
+                Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+
+            // SelectItem first: it collapses the multi-selection on its way through, which is what
+            // every other caller of it wants, and the set this press decided is applied on top.
+            SelectItem(ItemById(result.PreviewId) ?? item, "click");
+            ApplyMultiSelection(result);
             // Arm a possible drag out of the palette. Nothing is handled here, so this press is
             // still an ordinary click; only travel past the system threshold turns it into one.
-            _rowDragOrigin = (e.GetPosition(this), item);
+            _dragOrigin = (e.GetPosition(this), item);
         };
         row.MouseRightButtonUp += (_, e) =>
         {
@@ -4185,28 +4325,34 @@ public partial class MainWindow : Window
         return row;
     }
 
-    /// <summary>Where a press on a row started, and on which item, while it is still undecided.</summary>
-    private (System.Windows.Point Origin, ClipboardHistoryItem Item)? _rowDragOrigin;
+    /// <summary>Where a press started, and on which item, while it is still undecided.</summary>
+    private (System.Windows.Point Origin, ClipboardHistoryItem Item)? _dragOrigin;
 
     /// <summary>
-    /// Turns a held press on a row into a drag out of the palette, using the same
-    /// click-versus-drag rule the top and bottom bars already use for window drags: below the
-    /// system threshold nothing happens here at all, so a click still selects and a double-click
-    /// still pastes. The handler sits on the list rather than on each row because a fast drag
-    /// leaves the row it started on within a frame or two, and the following moves are then
-    /// raised by whichever row the pointer crossed — the armed item has to come from the field,
-    /// not from the element that reported the move.
+    /// Turns a held press on a row into a drag out of the palette. The handler sits on the list
+    /// rather than on each row because a fast drag leaves the row it started on within a frame or
+    /// two, and the following moves are then raised by whichever row the pointer crossed — the
+    /// armed item has to come from the field, not from the element that reported the move.
     /// </summary>
-    private void OnListMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    private void OnListMouseMove(object sender, System.Windows.Input.MouseEventArgs e) =>
+        TryStartArmedDrag(e, sender as DependencyObject);
+
+    /// <summary>
+    /// The click-versus-drag rule, shared by the list and the preview pane: the same one the top
+    /// and bottom bars use for window drags. Below the system threshold nothing happens at all, so
+    /// a press is still an ordinary click — the list still selects, a double-click still pastes,
+    /// and a press in the preview still does whatever it did before.
+    /// </summary>
+    private void TryStartArmedDrag(System.Windows.Input.MouseEventArgs e, DependencyObject? source)
     {
-        if (_rowDragOrigin is not { } armed)
+        if (_dragOrigin is not { } armed)
         {
             return;
         }
 
         if (e.LeftButton != MouseButtonState.Pressed)
         {
-            _rowDragOrigin = null;
+            _dragOrigin = null;
             return;
         }
 
@@ -4220,8 +4366,53 @@ public partial class MainWindow : Window
             return;
         }
 
-        _rowDragOrigin = null;
-        BeginRowDrag(armed.Item, sender as DependencyObject);
+        _dragOrigin = null;
+        // The press became a drag, so it was never the click that would have collapsed the
+        // selection down to the one row being dragged.
+        _pendingCollapseId = null;
+        BeginRowDrag(DragSelection(armed.Item), source);
+    }
+
+    /// <summary>
+    /// Arms the same gesture on the preview pane: looking at a big image, the obvious thing to
+    /// grab is the image, not the row. Nothing is handled here, so a click on the preview still
+    /// does exactly what it did before.
+    ///
+    /// A press inside the text preview never reaches this handler — the TextBox handles its own
+    /// button-down to place the caret — which is deliberate: selecting text in the preview must
+    /// stay a selection, so the text pane is dragged from its row instead.
+    /// </summary>
+    private void OnPreviewSurfaceMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // The expanded image overlay owns the mouse when it is up (pan and zoom); it covers the
+        // preview anyway, and arming underneath it would fight the pan.
+        if (_selected is null || ExpandedImageOverlay.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+
+        _dragOrigin = (e.GetPosition(this), _selected);
+    }
+
+    private void OnPreviewSurfaceMouseMove(object sender, System.Windows.Input.MouseEventArgs e) =>
+        TryStartArmedDrag(e, sender as DependencyObject);
+
+    /// <summary>
+    /// The rows this drag carries: the whole multi-selection when the pressed row is part of one,
+    /// and just that row otherwise. A press on an unselected row has already made it the selection
+    /// by the time this runs, which is the file-manager rule the press handler implements.
+    /// </summary>
+    private List<ClipboardHistoryItem> DragSelection(ClipboardHistoryItem armed)
+    {
+        if (_multiSelection.Count < 2 || !_multiSelection.Contains(armed.Id))
+        {
+            return [armed];
+        }
+
+        var items = VisibleOrder(LastRenderedVisibleItems())
+            .Where(item => _multiSelection.Contains(item.Id))
+            .ToList();
+        return items.Count > 1 ? items : [armed];
     }
 
     /// <summary>
@@ -4233,7 +4424,7 @@ public partial class MainWindow : Window
         Math.Abs(movedX) >= minimumX || Math.Abs(movedY) >= minimumY;
 
     /// <summary>
-    /// Drags an item out to another window.
+    /// Drags one or more items out to another window.
     ///
     /// Ordering here is load-bearing and was got wrong once. The palette is topmost over the middle
     /// of the screen, so the field being aimed at is usually underneath it, and the first attempt
@@ -4248,9 +4439,14 @@ public partial class MainWindow : Window
     /// dropped on nothing — Escape, or a release over the desktop — brings the palette back, so a
     /// misfire costs a reopen rather than the whole list.
     /// </summary>
-    private void BeginRowDrag(ClipboardHistoryItem item, DependencyObject? source)
+    private void BeginRowDrag(IReadOnlyList<ClipboardHistoryItem> items, DependencyObject? source)
     {
-        var hydrated = ClipboardItemForPasteFormat(item);
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        var hydrated = items.Select(item => ClipboardItemForPasteFormat(item)).ToList();
         if (BuildDragData(hydrated, _settings.DefaultPasteFormat) is not { } data)
         {
             return;
@@ -4340,7 +4536,9 @@ public partial class MainWindow : Window
             _dragPreview?.Hide();
         }
 
-        ShellLog.Info($"row drag id={item.Id} kind={item.Kind} concealed={concealed} effect={effect}");
+        ShellLog.Info(
+            $"row drag id={hydrated[0].Id} kind={hydrated[0].Kind} items={hydrated.Count} " +
+            $"concealed={concealed} effect={effect}");
         if (effect == System.Windows.DragDropEffects.None)
         {
             ShowPalette();
@@ -4349,6 +4547,29 @@ public partial class MainWindow : Window
 
     /// <summary>The one preview window, created on the first drag that has something to show.</summary>
     private DragPreview? _dragPreview;
+
+    /// <summary>
+    /// The visual for a drag of several rows: the count, because a picture of one of the three
+    /// items being dragged is a picture of the wrong thing. Same card chrome as a text drag.
+    /// </summary>
+    private FrameworkElement? BuildDragPreviewContent(IReadOnlyList<ClipboardHistoryItem> items)
+    {
+        if (items.Count == 1)
+        {
+            return BuildDragPreviewContent(items[0]);
+        }
+
+        return WrapDragPreview(
+            new TextBlock
+            {
+                Text = $"{items.Count} items",
+                Foreground = WpfBrushes.White,
+                FontSize = 12,
+                TextWrapping = TextWrapping.NoWrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+            new Thickness(9, 6, 9, 6));
+    }
 
     /// <summary>
     /// The visual that rides under the cursor for this item, or null when there is nothing worth
@@ -4493,17 +4714,26 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Fills the drag's data object from <see cref="ClipboardDragData"/>. Null when the item has
-    /// nothing to offer, which is the signal not to start a drag at all — an empty data object
+    /// Fills the drag's data object from <see cref="ClipboardDragData"/>. Null when the selection
+    /// has nothing to offer, which is the signal not to start a drag at all — an empty data object
     /// would give every target the no-drop cursor and look like a bug.
+    ///
+    /// The two format decisions below are single-item only, and deliberately: the .url format
+    /// describes one link, and materialising a text clip as a file is a per-clip convenience whose
+    /// cost (see MaterializeDragFile) is not worth paying several times over for a set that
+    /// already has a text format every target can take.
     /// </summary>
-    private System.Windows.DataObject? BuildDragData(ClipboardHistoryItem item, PasteFormatPreference pasteFormat)
+    private System.Windows.DataObject? BuildDragData(
+        IReadOnlyList<ClipboardHistoryItem> items,
+        PasteFormatPreference pasteFormat)
     {
-        var payload = ClipboardDragData.Create(item, pasteFormat);
+        var payload = ClipboardDragData.CreateMany(items, pasteFormat);
         if (payload.IsEmpty)
         {
             return null;
         }
+
+        var single = items.Count == 1 ? items[0] : null;
 
         var data = new System.Windows.DataObject();
         if (payload.Text is { } text)
@@ -4525,7 +4755,7 @@ public partial class MainWindow : Window
 
         var paths = payload.FilePaths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
 
-        if (item.Kind == ClipboardItemKind.Link && payload.Text is { Text.Length: > 0 } link)
+        if (single?.Kind == ClipboardItemKind.Link && payload.Text is { Text.Length: > 0 } link)
         {
             // CFSTR_INETURLW, the format every browser puts on a dragged link. Explorer turns it
             // into a real .url shortcut on drop, and no text target has ever asked for it, so
@@ -4541,8 +4771,8 @@ public partial class MainWindow : Window
         // Only when the item is not already files, and only when the user has asked for it: a
         // FileDrop on a text clip changes what every other app does with the drag. See
         // MaterializeDragFile.
-        if (paths.Count == 0 && _settings.DragClipsAsFiles && payload.Text is { } fileText &&
-            MaterializeDragFile(item.Kind, fileText.Text) is { } materialized)
+        if (paths.Count == 0 && single is not null && _settings.DragClipsAsFiles && payload.Text is { } fileText &&
+            MaterializeDragFile(single.Kind, fileText.Text) is { } materialized)
         {
             paths.Add(materialized);
         }
@@ -5087,6 +5317,95 @@ public partial class MainWindow : Window
     /// <summary>Whether the current selection was picked by the list rather than by the user.</summary>
     private bool _selectionIsAutomatic;
 
+    /// <summary>
+    /// Every selected row, which is the multi-selection when there is one and the previewed row
+    /// otherwise. This is what <see cref="PaletteMultiSelection"/> is handed, so the model never
+    /// has to know about the palette's two ways of holding a selection.
+    /// </summary>
+    private IReadOnlyCollection<string> SelectedIds() =>
+        _multiSelection.Count > 0 ? _multiSelection : (_selected is null ? [] : new[] { _selected.Id });
+
+    private ClipboardHistoryItem? ItemById(string id) =>
+        LastRenderedVisibleItems().FirstOrDefault(item => string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Paints one row's selection state. The fill means selected and the outline means "this is
+    /// the row the preview is showing", which is how the palette's one-fill rule survives several
+    /// rows being selected at once: three filled rows, one of them outlined. No new brush — these
+    /// really are selected rows, so they get the selected row's fill.
+    /// </summary>
+    private void PaintRowSelection(Border row, string id)
+    {
+        var previewed = string.Equals(id, _selected?.Id, StringComparison.OrdinalIgnoreCase);
+        row.Background = previewed || _multiSelection.Contains(id)
+            ? (WpfBrush)FindResource("Selected")
+            : WpfBrushes.Transparent;
+        row.BorderBrush = previewed ? (WpfBrush)FindResource("SelectedBorder") : WpfBrushes.Transparent;
+    }
+
+    /// <summary>Drops the multi-selection back to the previewed row alone, repainting what it drops.</summary>
+    private void ClearMultiSelection()
+    {
+        _selectionAnchorId = null;
+        if (_multiSelection.Count == 0)
+        {
+            return;
+        }
+
+        var dropped = _multiSelection.ToArray();
+        _multiSelection.Clear();
+        RepaintRows(dropped);
+    }
+
+    /// <summary>
+    /// Takes the set a press decided. A set of one is stored as no multi-selection at all: with
+    /// one row selected the fill and the outline would be saying the same thing.
+    /// </summary>
+    private void ApplyMultiSelection(PaletteMultiSelection.Result result)
+    {
+        var touched = _multiSelection.ToList();
+        _multiSelection.Clear();
+        if (result.Ids.Count > 1)
+        {
+            foreach (var id in result.Ids)
+            {
+                _multiSelection.Add(id);
+            }
+        }
+
+        _selectionAnchorId = result.AnchorId;
+        _pendingCollapseId = result.CollapseOnRelease ? result.PreviewId : null;
+        touched.AddRange(result.Ids);
+        RepaintRows(touched);
+    }
+
+    private void RepaintRows(IEnumerable<string> ids)
+    {
+        foreach (var id in ids)
+        {
+            if (_rows.TryGetValue(id, out var row))
+            {
+                PaintRowSelection(row, id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The other half of the deferred collapse: the press kept the whole selection so it could be
+    /// dragged, and a release with no drag means it was a click, which selects the one row.
+    /// </summary>
+    private void OnListMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_pendingCollapseId is not { } id)
+        {
+            return;
+        }
+
+        _pendingCollapseId = null;
+        ClearMultiSelection();
+        _selectionAnchorId = id;
+    }
+
     private void SelectItem(ClipboardHistoryItem? item, string reason)
     {
         if (item is null || item.Id == _selected?.Id)
@@ -5102,17 +5421,21 @@ public partial class MainWindow : Window
             _selectionIsAutomatic = false;
         }
 
-        if (_selected is not null && _rows.TryGetValue(_selected.Id, out var oldRow))
+        // Any new selection collapses the multi-selection: keyboard navigation, a reconcile or an
+        // undo all mean one row. The one caller that does not — a modifier-click — re-applies its
+        // own set immediately after this returns.
+        ClearMultiSelection();
+
+        var previous = _selected;
+        _selected = item;
+        if (previous is not null && _rows.TryGetValue(previous.Id, out var oldRow))
         {
-            oldRow.Background = WpfBrushes.Transparent;
-            oldRow.BorderBrush = WpfBrushes.Transparent;
+            PaintRowSelection(oldRow, previous.Id);
         }
 
-        _selected = item;
         if (_rows.TryGetValue(item.Id, out var newRow))
         {
-            newRow.Background = (WpfBrush)FindResource("Selected");
-            newRow.BorderBrush = (WpfBrush)FindResource("SelectedBorder");
+            PaintRowSelection(newRow, item.Id);
         }
 
         // The header is one shared element, so a slow thumbnail must not paint over whatever
@@ -5154,6 +5477,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void ClearSelection()
     {
+        ClearMultiSelection();
+        _pendingCollapseId = null;
         _selected = null;
         _selectionIsAutomatic = false;
         // Invalidate any in-flight preview render so it cannot repaint the pane after the clear.
