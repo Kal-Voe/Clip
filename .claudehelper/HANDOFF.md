@@ -3,6 +3,27 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## No more grey fills, and the + stops colliding (2026-08-31, v1.4.3)
+
+Isaiah's notes on 1.4.2, all four visual.
+
+- **Selected filter chips** were a grey block (`Selected` fill + `SelectedBorder`), worst on the
+  split pills where it filled the chevron half too. Selection is an accent outline and brighter ink
+  now, no fill at all -- a bar with six bounded controls in it did not need another slab of colour.
+- **The preview's Open button** (`MiniButton`) had a resting `AccentSoft` fill that read as a heavy
+  chip on the preview. Outline only; the fill appears on hover.
+- **The + looked off-centre** because it was 22px holding a 13px glyph: at 150% that is 33 and 19.5
+  physical pixels, so the centre landed on a half pixel. 24 and 12 give 36 and 18, whole either way.
+- **The top row collided with the +** because the button floats over the scroller and a filtered
+  list has no TODAY header to sit under. The scroller reserves a 36px top band now, so nothing can
+  ever slide beneath it.
+
+**Drop shadow: already there, measured, nothing to add.** Sampling outward from the window edge over
+a pure red background gives `E20000 E70000 EB0000 ... FA0000` -- a soft darkening that fades out,
+i.e. a real shadow. Identical with and without the WS_CAPTION/WS_THICKFRAME trick, so the layered
+acrylic window is already getting DWM's shadow and the caption route buys nothing. It is subtle by
+Windows' taste; there is no knob to deepen it without giving up the blur.
+
 ## Native type, and the + moved onto the list (2026-08-31, v1.4.2)
 
 **Fonts: stripped, not bundled.** The UI asked for Inter and JetBrains Mono and shipped neither, so

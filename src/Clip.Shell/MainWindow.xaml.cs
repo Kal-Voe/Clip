@@ -10562,23 +10562,26 @@ public partial class MainWindow : Window
 
     private void SetFilterVisual(WpfButton button, Border? shell, bool selected)
     {
-        var selectedBorder = (WpfBrush)FindResource("SelectedBorder");
-        var selectedFill = (WpfBrush)FindResource("Selected");
+        // Selection is an accent outline and brighter ink, never a fill. The grey block this
+        // replaced sat heavily in the bar and looked worst on the split pills, where it filled the
+        // chevron half too. An outline reads as "this one is on" without adding another slab of
+        // colour to a row that already has six bounded controls in it.
+        var selectedOutline = (WpfBrush)FindResource("Accent");
         button.Foreground = selected ? (WpfBrush)FindResource("Text") : (WpfBrush)FindResource("Muted");
         if (shell is not null)
         {
             // Split pill: the shell carries the whole selected look so the button half and the
             // chevron half can never drift apart visually. Unselected pills keep a neutral
             // outline so the button+dropdown always reads as one bounded control.
-            shell.Background = selected ? selectedFill : WpfBrushes.Transparent;
-            shell.BorderBrush = selected ? selectedBorder : (WpfBrush)FindResource("Line2");
+            shell.Background = WpfBrushes.Transparent;
+            shell.BorderBrush = selected ? selectedOutline : (WpfBrush)FindResource("Line2");
             button.Background = WpfBrushes.Transparent;
             button.BorderBrush = WpfBrushes.Transparent;
         }
         else
         {
-            button.Background = selected ? selectedFill : WpfBrushes.Transparent;
-            button.BorderBrush = selected ? selectedBorder : WpfBrushes.Transparent;
+            button.Background = WpfBrushes.Transparent;
+            button.BorderBrush = selected ? selectedOutline : WpfBrushes.Transparent;
         }
     }
 
