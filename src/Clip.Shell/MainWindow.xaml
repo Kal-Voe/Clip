@@ -161,8 +161,11 @@
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
+                            <!-- Hover lights the outline, it does not fill. A grey wash on hover was
+                                 the last of the filled states and read as heavy, and how heavy
+                                 depended on the monitor. -->
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoft}"/>
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource Muted2}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
@@ -184,8 +187,9 @@
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
+                            <!-- The shell owns this pill's outline, so a half cannot light one of
+                                 its own; brightening the ink is the hover state here. -->
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoft}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
@@ -207,8 +211,9 @@
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
+                            <!-- The shell owns this pill's outline, so a half cannot light one of
+                                 its own; brightening the ink is the hover state here. -->
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoft}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource Text}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
@@ -246,7 +251,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Opacity" Value="0.82"/>
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource Muted2}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="{DynamicResource Selected}"/>
@@ -405,10 +410,9 @@
                                       VerticalScrollBarVisibility="Hidden"
                                       HorizontalScrollBarVisibility="Disabled"
                                       ClipToBounds="True"
-                                      Padding="0,0,0,8"
                                       ScrollChanged="OnListScrollChanged"
                                       PreviewMouseWheel="OnListWheel">
-                            <StackPanel x:Name="ItemsHost" ClipToBounds="True"/>
+                            <StackPanel x:Name="ItemsHost" ClipToBounds="True" Margin="0,0,0,8"/>
                         </ScrollViewer>
                         <!-- The one thing pinning could not do: start an item that was never a
                              copy. It floats at the top right of the list rather than in the footer,
