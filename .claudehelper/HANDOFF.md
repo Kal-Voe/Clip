@@ -3,6 +3,28 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Drag preview, and hover finally stops filling (2026-08-31, v1.5.1)
+
+**Row hover was still washing grey** -- the earlier pass only did the toolbar. Rows already carry a
+1px border for the selection, so hover lights that instead. Nothing shifts, and there is no fill left
+to look heavy on the wider-gamut monitors.
+
+**Dragging a clip now shows what you are dragging.** Ported from WinShot's `Core/DragPreview.cs` at
+Isaiah's suggestion -- it had already solved this, and its comments record why the obvious routes do
+not work: WPF has no built-in drag image, and the shell's IDragSourceHelper is unusable because
+neither WPF's nor WinForms' DataObject implements the COM SetData it calls back into (both E_NOTIMPL).
+So it is a click-through topmost window (WS_EX_TRANSPARENT/NOACTIVATE/TOOLWINDOW), opaque to keep the
+hardware render path, moved with SetWindowPos in physical pixels from GiveFeedback, created once and
+reused. Images get a real thumbnail; text/link/colour get a card in the palette's own Surface/Text/Line
+at the rows' 6px radius showing the first line cut to 5 words or 28 characters with an ellipsis;
+files get the name plus "+N more", or the shell thumbnail when one is already cached. A preview that
+cannot be built never fails the drag. `DragPreview.CardLabel` is pure and has 16 tests.
+
+**Verified on screen, both kinds**, against a private drop target so nothing landed in a real app:
+the text drag showed a rounded card reading "I'm not a fan of..." and dropped `Text, UnicodeText`;
+the image drag showed the actual picture under the cursor and dropped `FileDrop, Bitmap` pointing at
+the stored asset.
+
 ## Drag a clip straight into a field (2026-08-31, v1.5.0)
 
 Rows in the list are OLE drag sources now: drag one out and drop it into any field. Text/Link give
