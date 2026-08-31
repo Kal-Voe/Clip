@@ -1040,6 +1040,15 @@ public partial class MainWindow : Window
         TitleText.MouseLeftButtonDown += OnTitleTextMouseLeftButtonDown;
         TitleText.Foreground = (WpfBrush)FindResource("Text");
         SubTitleText.Foreground = (WpfBrush)FindResource("Muted");
+        // The bright outline on hover, for the two bits of chrome that are bordered but are not
+        // buttons: the search field, and the split pills whose shell owns the outline their halves
+        // cannot light themselves. Leaving is a full UpdateFilterVisuals rather than a hardcoded
+        // Line2, so hovering off the selected pill restores its selected outline instead of
+        // quietly demoting it.
+        WireOutlineHover(SearchShell, () => SearchShell.BorderBrush = (WpfBrush)FindResource("Line2"));
+        WireOutlineHover(AllFilterShell, UpdateFilterVisuals);
+        WireOutlineHover(MediaFilterShell, UpdateFilterVisuals);
+        WireOutlineHover(FilesFilterShell, UpdateFilterVisuals);
         TitleText.MouseEnter += (_, _) => TitleText.Foreground = (WpfBrush)FindResource("Accent");
         TitleText.MouseLeave += (_, _) => TitleText.Foreground = (WpfBrush)FindResource("Text");
         _toastTimer.Tick += (_, _) =>
@@ -11012,6 +11021,20 @@ public partial class MainWindow : Window
 
     private static bool IsMediaFilter(string filter) =>
         filter is "images" or "media-images" or "media-videos" or "media-audio";
+
+    /// <summary>
+    /// Lights a bordered piece of chrome on hover with the same bright outline the chips and the
+    /// Open button use, and hands the resting look back to <paramref name="restore"/> on the way
+    /// out — the resting brush is not a constant for a filter pill, which is outlined differently
+    /// when it is the selected one.
+    /// </summary>
+    private void WireOutlineHover(Border border, Action restore)
+    {
+        // Resolved per hover, not captured once: the brush would otherwise be the one that existed
+        // at startup and would keep painting the dark theme's outline after a switch to light.
+        border.MouseEnter += (_, _) => border.BorderBrush = (WpfBrush)FindResource("Muted2");
+        border.MouseLeave += (_, _) => restore();
+    }
 
     private void SetFilterVisual(WpfButton button, Border? shell, bool selected)
     {
