@@ -515,10 +515,6 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <!-- Keycap texts are placeholders only: UpdateFooterHotkeyHints rewrites them
@@ -539,32 +535,7 @@
                         </Border>
                         <TextBlock Text="Paste &amp; stay" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
                     </StackPanel>
-                    <StackPanel x:Name="CopyHintPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
-                        <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
-                            <TextBlock x:Name="CopyHintKey" Text="Ctrl+C" Style="{StaticResource HotkeyText}"/>
-                        </Border>
-                        <TextBlock Text="Copy" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
-                    </StackPanel>
-                    <StackPanel x:Name="ActionsHintPanel" Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
-                        <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
-                            <TextBlock x:Name="ActionsHintKey" Text="Ctrl+K" Style="{StaticResource HotkeyText}"/>
-                        </Border>
-                        <TextBlock Text="Actions" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
-                    </StackPanel>
-                    <StackPanel x:Name="PinHintPanel" Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
-                        <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
-                            <TextBlock x:Name="PinHintKey" Text="Ctrl+P" Style="{StaticResource HotkeyText}"/>
-                        </Border>
-                        <TextBlock Text="Pin" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
-                    </StackPanel>
-                    <!-- Ctrl+Q is hardwired in OnWindowKeyDown, not a rebindable hotkey, so its cap is static. -->
-                    <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border BorderBrush="{DynamicResource Line2}" BorderThickness="1" CornerRadius="4" Padding="7,2" Background="{DynamicResource Surface}">
-                            <TextBlock Text="Ctrl+Q" Style="{StaticResource HotkeyText}"/>
-                        </Border>
-                        <TextBlock Text="Shortcuts" Foreground="{DynamicResource Muted}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center" Margin="7,0,0,0"/>
-                    </StackPanel>
-                    <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                         <!-- The pause toggle lives in the tray menu, in another process; this badge is
                              what keeps a forgotten pause from silently eating every copy. -->
                         <Border x:Name="CapturePausedBadge"

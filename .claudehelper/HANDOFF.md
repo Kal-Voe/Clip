@@ -3,6 +3,47 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Footer trimmed, transforms always shown, and the resize found (2026-08-31, v1.4.1)
+
+Isaiah's round of feedback on 1.4.0, and one finding that was not Clip's fault.
+
+**The stuck Shift was real and environmental.** Alt+V was intermittently opening Raycast instead of
+Clip. `GetAsyncKeyState` showed **Right Shift physically and logically down** with nothing held, so
+Alt+V was arriving as Alt+Shift+V and Raycast owns that. Clip was not the cause -- it was the only
+thing noticing, `ReleaseStuckModifiers` had logged `released stuck modifiers 10` (0x10 = VK_SHIFT)
+four times. Cleared by injecting key-ups for both shifts. If it recurs it is the keyboard or a
+remote-desktop session latching the modifier, not the app.
+
+**The palette resizing itself** was real. The position log showed the same monitor opening at
+`win=800x520` and `win=1200x780`, and once `1800x1170` -- each time the previous *physical* size
+adopted as the new *logical* one and inflated again by the next monitor's scale. WPF mishandles
+WM_DPICHANGED for a layered window, and this window is layered for the acrylic. Since the palette
+has exactly one size there is nothing to preserve: `PositionOnMouseScreen` now re-asserts
+`PaletteDesignWidth/Height` on every open (leaving fullscreen and expanded-image alone, which own
+the size while they are on). A test asserts the constants still match the XAML.
+
+**The Transform submenu showed only three rows** because it hid every transform that would not
+change the text -- on a tidy one-line URL, trim, join and extract-links are all no-ops. That made
+the feature look half-missing. The five reshaping rows are now always listed so the menu is the
+same shape every time; only "Copy links only" stays conditional, because its absence means
+something (no links here). Labels are plainer too: "Trim spaces and blank lines", "Join into one
+line", "Copy links only". The offered set is now the pure `MainWindow.TransformOffers`, tested.
+
+**Footer** is down to Enter/Paste and Shift+Enter/Paste & stay, on request. Copy, Actions, Pin and
+Shortcuts caps are gone.
+
+**Export/Restore proven, not assumed** -- Isaiah rightly pushed back that this was shippable
+without a live check. Ran the real `Export`/`Restore` against a copy of his 500-item store: 500
+entries out, 500 back, item counts match, and a junk zip is refused. The only files that do not
+come back are `history.index.json`, `history.keys.json` and `history.top.index.json`, which are
+derived and rebuilt on load.
+
+### Next steps
+
+1. Watch whether the palette ever opens at the wrong size again; if it does, the DPI re-assert
+   needs to move earlier than the placement call.
+2. Still open: bundle Inter/JetBrains Mono, and the glass has no drop shadow.
+
 ## OCR text, transforms, snippets, paste-and-stay, backup (2026-08-31, v1.4.0)
 
 Isaiah asked what was left worth doing. Perf was already done and measured, so this was features.

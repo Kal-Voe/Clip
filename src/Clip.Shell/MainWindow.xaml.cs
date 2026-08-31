@@ -4239,34 +4239,53 @@ public partial class MainWindow : Window
     private void AddTransformSubmenu(List<MenuAction> actions, ClipboardHistoryItem item)
     {
         var text = FullTextPayload(item);
-        if (string.IsNullOrEmpty(text))
+        var offers = TransformOffers(text);
+        if (offers.Count == 0)
         {
             return;
         }
 
-        var children = new List<MenuAction>();
-        void Offer(string label, Func<string, string> transform)
+        actions.Add(MenuAction.Submenu(
+            "Transform",
+            offers.Select(o => new MenuAction(o.Label, () => CopyTransformed(o.Label, o.Result))).ToList()));
+    }
+
+    /// <summary>
+    /// The Transform rows for a piece of text, in menu order.
+    ///
+    /// The five reshaping rows are always offered, even when one would hand back the same text.
+    /// Hiding no-ops made the submenu change shape from item to item — on a tidy one-line URL only
+    /// the three case rows survived, which reads as most of the feature being missing rather than
+    /// as "those would do nothing here". "Copy links only" is the exception: its absence is
+    /// informative (this text has no links in it) rather than baffling, so it is dropped when it
+    /// would return the text unchanged or nothing at all.
+    /// </summary>
+    internal static IReadOnlyList<(string Label, string Result)> TransformOffers(string text)
+    {
+        var offers = new List<(string, string)>();
+        if (string.IsNullOrEmpty(text))
+        {
+            return offers;
+        }
+
+        void Offer(string label, Func<string, string> transform, bool onlyWhenItChanges = false)
         {
             var result = transform(text);
-            if (!ShouldOfferTransform(text, result))
+            if (result.Length == 0 || (onlyWhenItChanges && string.Equals(result, text, StringComparison.Ordinal)))
             {
                 return;
             }
 
-            children.Add(new MenuAction(label, () => CopyTransformed(label, result)));
+            offers.Add((label, result));
         }
 
         Offer("UPPERCASE", ClipboardTextTransforms.Upper);
         Offer("lowercase", ClipboardTextTransforms.Lower);
         Offer("Title Case", ClipboardTextTransforms.TitleCase);
-        Offer("Trim Whitespace", ClipboardTextTransforms.Trim);
-        Offer("Single Line", ClipboardTextTransforms.SingleLine);
-        Offer("Extract URLs", ClipboardTextTransforms.ExtractUrls);
-
-        if (children.Count > 0)
-        {
-            actions.Add(MenuAction.Submenu("Transform", children));
-        }
+        Offer("Trim spaces and blank lines", ClipboardTextTransforms.Trim);
+        Offer("Join into one line", ClipboardTextTransforms.SingleLine);
+        Offer("Copy links only", ClipboardTextTransforms.ExtractUrls, onlyWhenItChanges: true);
+        return offers;
     }
 
     /// <summary>
@@ -8580,6 +8599,20 @@ public partial class MainWindow : Window
         // next, so half the time it centred the unscaled size and the palette landed low and right.
         // Width/Height are DIPs and never race; the target monitor's scale is a property of the
         // monitor. Placing and sizing in one call means there is no in-between frame to rescale.
+        // Re-assert the design size before placing. The palette has one size and should never
+        // appear larger or smaller, but the log caught it opening at 800x520, 1200x780 and once
+        // 1800x1170 DIPs — always the previous physical size adopted as the new logical one, each
+        // trip through a differently-scaled monitor inflating it again by that monitor's scale.
+        // WPF mishandles WM_DPICHANGED for a layered window, and this window is layered for the
+        // acrylic. Since the size is a constant there is nothing to preserve: set it back. The
+        // media-fullscreen and expanded-image modes own the size while they are on, so they are
+        // left alone.
+        if (!_isMediaFullScreen && !_expandedWindowResized)
+        {
+            Width = PaletteDesignWidth;
+            Height = PaletteDesignHeight;
+        }
+
         var scale = MonitorScale(monitor);
         var (x, y, windowWidth, windowHeight) = CenteredPlacement(
             work.Left,
@@ -9296,11 +9329,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateFooterHotkeyHints()
     {
+        // Only the two paste gestures are advertised. Copy, Actions, Pin and Shortcuts used to have
+        // caps here too and were removed on request: they are the ones you either already know or
+        // find in the Ctrl+Q list, and six hints made the bar read as a wall of chrome.
         SetFooterHint(PasteHintPanel, PasteHintKey, _settings.Hotkeys.PasteSelected);
         SetFooterHint(PasteStayHintPanel, PasteStayHintKey, PasteAndStayGesture(_settings.Hotkeys.PasteSelected) ?? string.Empty);
-        SetFooterHint(CopyHintPanel, CopyHintKey, _settings.Hotkeys.CopySelected);
-        SetFooterHint(ActionsHintPanel, ActionsHintKey, _settings.Hotkeys.OpenActions);
-        SetFooterHint(PinHintPanel, PinHintKey, _settings.Hotkeys.PinSelected);
     }
 
     private static void SetFooterHint(StackPanel panel, TextBlock keycap, string gesture)
@@ -11750,6 +11783,14 @@ public partial class MainWindow : Window
     /// the silhouette — it only decides where its own border stroke sits, and a radius wider than
     /// DWM's would hang that stroke inside the clip as a second, mismatched arc.
     /// </summary>
+    /// <summary>
+    /// The palette's one size, in DIPs, matching Width/Height on the Window in XAML. Kept as
+    /// constants because PositionOnMouseScreen re-asserts them on every open — see the comment
+    /// there for the DPI drift that made that necessary.
+    /// </summary>
+    internal const double PaletteDesignWidth = 800;
+    internal const double PaletteDesignHeight = 520;
+
     internal const double ShellCornerRadius = 8;
 
     /// <summary>

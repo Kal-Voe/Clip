@@ -77,4 +77,31 @@ public sealed class PalettePlacementTests
         Assert.Equal(100, x);
         Assert.Equal(50, y);
     }
+
+    [Fact]
+    public void TheDesignSizeMatchesTheWindowsOwnWidthAndHeight()
+    {
+        // PositionOnMouseScreen re-asserts these on every open, so if the XAML size ever changes
+        // and these do not, every open would quietly resize the palette to the stale constants.
+        var xaml = System.IO.File.ReadAllText(RepoPath("src", "Clip.Shell", "MainWindow.xaml"));
+        Assert.Contains($"Width=\"{MainWindow.PaletteDesignWidth}\"", xaml);
+        Assert.Contains($"Height=\"{MainWindow.PaletteDesignHeight}\"", xaml);
+    }
+
+    private static string RepoPath(params string[] parts)
+    {
+        var directory = AppContext.BaseDirectory;
+        while (!string.IsNullOrWhiteSpace(directory))
+        {
+            var candidate = System.IO.Path.Combine(new[] { directory }.Concat(parts).ToArray());
+            if (System.IO.File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = System.IO.Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new System.IO.FileNotFoundException($"Could not find {System.IO.Path.Combine(parts)}.");
+    }
 }
