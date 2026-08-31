@@ -3,6 +3,26 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## The toggle's stock glow, and the menu's missing last row (2026-08-31, v1.6.3)
+
+- **The settings toggles had Windows' own hover glow** around them. The switch is a hand-built
+  Border inside a `Button` that never set `Template`, so WPF fell back to the stock button chrome
+  and painted its pale halo. It uses the bare transparent template now.
+- **The action menu was clipping its last row.** Not a border-radius problem: the popup window was
+  genuinely too short. A `Popup` sizes its window to the child's desired size and takes no account
+  of an `Effect`, so the drop shadow's offset and 40px blur pushed the bottom of the menu outside
+  the window -- `Delete` was missing entirely and `Save as File...` lost its lower border on hover.
+  Captured it to be sure before touching anything. Fixed by reserving the shadow's own spread as a
+  `Margin` on the menu border (bottom-right only, so placement still anchors top-left and the menu
+  does not move). Same fix on the Share submenu, which had it too.
+
+### Next up, in order (Isaiah's list)
+
+1. Light theme -- never looked at; every colour this session was tuned in dark.
+2. Drag the big preview image, not just rows.
+3. Multi-select drag.
+4. Revisit the .txt-on-desktop compromise with a CIDA data object, now that real drags are testable.
+
 ## The last grey fills, in the places you had not opened yet (2026-08-31, v1.6.2)
 
 Applying Isaiah's own rule -- only the previewed row gets a fill -- to the two places it had not

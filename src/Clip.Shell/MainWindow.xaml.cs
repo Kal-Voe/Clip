@@ -15039,6 +15039,11 @@ internal sealed class SettingsWindow : Window
             Content = track,
             Tag = enabled,
             Cursor = System.Windows.Input.Cursors.Hand,
+            // Without a template this falls back to the stock WPF button chrome, which draws
+            // Windows' own pale hover glow around the switch — the halo that had no business
+            // being there. The bare template paints only what we set.
+            Template = TransparentButtonTemplate(),
+            FocusVisualStyle = null,
         };
 
         toggle.Click += (_, _) =>

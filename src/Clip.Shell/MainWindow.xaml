@@ -583,9 +583,16 @@
             </Border>
 
             <Popup x:Name="ActionMenuPopup" AllowsTransparency="True" Placement="MousePoint" StaysOpen="False">
+                <!-- The margin is what keeps the last row on screen. A Popup sizes its window to the
+                     child's desired size and takes no account of an Effect, so the shadow's offset
+                     and blur pushed the bottom of the menu outside the window and it was clipped:
+                     the Delete row vanished entirely and the row above it lost its lower border.
+                     Reserving the shadow's own spread here fixes it without moving the menu, since
+                     the growth is all bottom-right and placement anchors top-left. -->
                 <Border x:Name="ActionMenuBorder"
                         Background="{DynamicResource Surface}"
                         CornerRadius="8"
+                        Margin="0,0,34,34"
                         Padding="4"
                         MinWidth="178"
                         BorderBrush="{DynamicResource Line2}"
@@ -600,9 +607,16 @@
             <Popup x:Name="ShareSubmenuPopup" AllowsTransparency="True" Placement="Right" StaysOpen="False">
                 <!-- Surface here is only the starting color; ApplyTheme re-paints both menu borders
                      opaque, because a Popup is its own window with no acrylic under it. -->
+                <!-- The margin is what keeps the last row on screen. A Popup sizes its window to the
+                     child's desired size and takes no account of an Effect, so the shadow's offset
+                     and blur pushed the bottom of the menu outside the window and it was clipped:
+                     the Delete row vanished entirely and the row above it lost its lower border.
+                     Reserving the shadow's own spread here fixes it without moving the menu, since
+                     the growth is all bottom-right and placement anchors top-left. -->
                 <Border x:Name="ShareSubmenuBorder"
                         Background="{DynamicResource Surface}"
                         CornerRadius="8"
+                        Margin="0,0,34,34"
                         Padding="4"
                         MinWidth="178"
                         BorderBrush="{DynamicResource Line2}"
