@@ -3,6 +3,39 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## WinShot's preview chrome, no grey fills left, and dropped links (2026-08-31, v1.6.0)
+
+- **Press stopped filling grey** on the chips, Open, Edit, expand, settings and the + button. It
+  dims instead. The only fill left in the app is the selected row -- Isaiah's own rule, and the one
+  place a fill actually identifies something.
+- **Row hover** moved Line2 -> Muted2, the same bright outline the chips and Open already use. Line2
+  was close enough to the row's own dark that it barely registered on the wider-gamut monitors.
+- **Drag preview chrome is WinShot's exactly**: white hairline on black, not the palette's Surface
+  and Line. Matching WinShot was the ask, and white-on-black also stays legible dragged over a dark
+  window, which is where a dark themed card vanishes. Verified mid-drag on screen.
+- **Dropping a link on the desktop leaves a real .url**, via the native `UniformResourceLocatorW`
+  format every browser publishes. No toggle, and it costs the common case nothing because no text
+  target asks for that format.
+
+**Text-as-a-file is behind a setting, off by default (General -> "Drag clips out as files"), and
+that is a real compromise worth understanding.** Isaiah asked for a dropped text clip to save a .txt
+the way an image already does. The only way to offer that is FileDrop, and FileDrop on a text clip
+changes what editors do with it: Chromium/Electron apps (VS Code, Slack, Discord, browser Gmail)
+query CF_HDROP by name and will open or attach the file instead of inserting the text -- which
+breaks the gesture he uses far more. Format ordering is not a lever: DataObject enumeration returns
+hash-table order, not insertion order, and varies between runs (measured). So the default keeps
+text-into-a-field and the desktop behaviour is one dropdown away.
+
+Verified on screen under 1.6.0: a text drag drops `Text, UnicodeText` only -- no FileDrop -- so
+fields still work, and the preview showed the white-on-black card.
+
+### Next steps
+
+1. Unverified and worth Isaiah's eye: what filename Explorer picks for a dropped .url, and the new
+   settings row rendering. With the setting on, Word/Outlook's drop priority is unknown.
+2. The upgrade that removes the toggle entirely is a CIDA (`Shell IDList Array`) data object --
+   Explorer reads it, Chromium does not. The agent stopped short because its probe was inconclusive.
+
 ## Drag preview, and hover finally stops filling (2026-08-31, v1.5.1)
 
 **Row hover was still washing grey** -- the earlier pass only did the toolbar. Rows already carry a
