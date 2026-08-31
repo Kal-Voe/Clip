@@ -818,6 +818,13 @@ public partial class MainWindow : Window
     private const int WmMouseHWheel = 0x020E;
     private const int DwmwaWindowCornerPreference = 33;
     private const int DwmwaCloak = 13;
+    /// <summary>
+    /// The logical size every row asks <see cref="IconFor"/> for. Named because it is also the
+    /// key a shell thumbnail is cached under, so the drag preview has to ask for the same size to
+    /// find what the row already resolved.
+    /// </summary>
+    private const int RowIconLogicalSize = 96;
+
     private const int RowIconDecodePixels = 48;
     private const int PreviewImageDecodePixels = 900;
     private const int MaxCachedRasterImages = 256;
@@ -1199,6 +1206,12 @@ public partial class MainWindow : Window
                 UnregisterHotKey(hwnd, OpenOverrideHotkeyId);
                 _openOverrideRegistered = false;
             }
+
+            // The drag preview is its own top-level window and is deliberately not owned by the
+            // palette, so nothing else closes it — an undisposed one would keep the process alive
+            // past the last visible window.
+            _dragPreview?.Dispose();
+            _dragPreview = null;
 
             FlushPendingClipboardPersists();
             if (!PaletteSessionMode)
@@ -4047,7 +4060,7 @@ public partial class MainWindow : Window
         // thumbnail arrives late through the callback: each icon element belongs to exactly one
         // item and rows are rebuilt per render, so a swap landing on a discarded element is
         // harmless — no tag guard needed the way the shared header icon needs one.
-        icon.Source = IconFor(item, 96, preferRichPreview: true, onRicher: richer => icon.Source = richer);
+        icon.Source = IconFor(item, RowIconLogicalSize, preferRichPreview: true, onRicher: richer => icon.Source = richer);
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         AttachFavicon(icon, item);
         grid.Children.Add(icon);
@@ -4231,6 +4244,24 @@ public partial class MainWindow : Window
         // and stay stuck in its hover visual, never seeing the button-up the OS loop now owns.
         Mouse.Capture(null);
 
+        // Built before the drag rather than inside the feedback tick: decoding a thumbnail while
+        // the OLE loop owns the mouse would stutter the first frames of the drag. Null is a
+        // perfectly good answer — the drag then looks exactly as it did before this existed.
+        var preview = BuildDragPreviewContent(hydrated);
+        if (preview is not null)
+        {
+            try
+            {
+                _dragPreview ??= new DragPreview();
+            }
+            catch (Exception ex)
+            {
+                // Same rule as the content: no preview is a fine outcome, no drag is not.
+                ShellLog.Error(ex, "drag preview window failed");
+                preview = null;
+            }
+        }
+
         var concealed = false;
         System.Windows.GiveFeedbackEventHandler feedback = (_, e) =>
         {
@@ -4238,6 +4269,7 @@ public partial class MainWindow : Window
             e.Handled = true;
             if (concealed)
             {
+                _dragPreview?.MoveToCursor();
                 return;
             }
 
@@ -4247,6 +4279,23 @@ public partial class MainWindow : Window
             // behind a window that is no longer there.
             concealed = true;
             ConcealPalette("drag-out");
+
+            // After the conceal, so the palette's own topmost window cannot end up over the
+            // preview. The preview is not owned by the palette, so the conceal leaves it alone.
+            // Guarded because this runs inside the OLE loop: an exception escaping here would
+            // take the drag down with it.
+            try
+            {
+                if (preview is not null)
+                {
+                    _dragPreview?.Show(preview, (WpfBrush)FindResource("Surface"));
+                }
+            }
+            catch (Exception ex)
+            {
+                ShellLog.Error(ex, "drag preview show failed");
+                preview = null;
+            }
         };
 
         System.Windows.DragDropEffects effect;
@@ -4265,6 +4314,10 @@ public partial class MainWindow : Window
         finally
         {
             System.Windows.DragDrop.RemoveGiveFeedbackHandler(dragSource, feedback);
+            // Every exit lands here — dropped, cancelled with Escape, or thrown out of the loop —
+            // and a preview left on screen after any of them would be a window stuck to the
+            // cursor with no way to dismiss it.
+            _dragPreview?.Hide();
         }
 
         ShellLog.Info($"row drag id={item.Id} kind={item.Kind} concealed={concealed} effect={effect}");
@@ -4272,6 +4325,150 @@ public partial class MainWindow : Window
         {
             ShowPalette();
         }
+    }
+
+    /// <summary>The one preview window, created on the first drag that has something to show.</summary>
+    private DragPreview? _dragPreview;
+
+    /// <summary>
+    /// The visual that rides under the cursor for this item, or null when there is nothing worth
+    /// showing. Every path here is allowed to give up, and the whole thing is wrapped: a drag must
+    /// never fail because its preview could not be built, so a failure here simply drags with the
+    /// plain cursor the way it always did.
+    /// </summary>
+    private FrameworkElement? BuildDragPreviewContent(ClipboardHistoryItem item)
+    {
+        try
+        {
+            var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+            if (DragPreviewImagePath(item) is { } imagePath)
+            {
+                // Decoded for the monitor the drag starts on, then fitted by Uniform inside a
+                // square of MaxImageEdge, which is what puts the longest edge on 180 whether the
+                // clip is a portrait photo or a wide screenshot. DownOnly so something already
+                // smaller than the box is shown at its own size rather than blown up into mush.
+                var picture = new WpfImage
+                {
+                    Source = LoadBitmap(imagePath, (int)Math.Round(DragPreview.MaxImageEdge * Math.Max(1.0, dpiScale))),
+                    Stretch = Stretch.Uniform,
+                    StretchDirection = StretchDirection.DownOnly,
+                    MaxWidth = DragPreview.MaxImageEdge,
+                    MaxHeight = DragPreview.MaxImageEdge,
+                };
+                RenderOptions.SetBitmapScalingMode(picture, BitmapScalingMode.HighQuality);
+                return WrapDragPreview(picture, new Thickness(3));
+            }
+
+            var label = DragPreviewLabelFor(item);
+            if (label.Length == 0)
+            {
+                return null;
+            }
+
+            var text = new TextBlock
+            {
+                Text = label,
+                Foreground = (WpfBrush)FindResource("Text"),
+                FontSize = 12,
+                TextWrapping = TextWrapping.NoWrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            // A file whose shell thumbnail is already cached gets it as the card's lead — the same
+            // picture the row is showing. Cache-only on purpose: the cold call can spend hundreds
+            // of milliseconds inside the shell, and the gesture is already moving by now.
+            if (item.Kind == ClipboardItemKind.Files &&
+                item.FilePaths.Count == 1 &&
+                SourceAppIcons.TryGetCachedThumbnail(item.FilePaths[0], RowIconLogicalSize, dpiScale, out var thumbnail) &&
+                thumbnail is not null)
+            {
+                var stack = new StackPanel { Orientation = WpfOrientation.Horizontal };
+                stack.Children.Add(new WpfImage
+                {
+                    Source = thumbnail,
+                    Width = 20,
+                    Height = 20,
+                    Stretch = Stretch.Uniform,
+                    Margin = new Thickness(0, 0, 7, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+                stack.Children.Add(text);
+                return WrapDragPreview(stack, new Thickness(8, 6, 10, 6));
+            }
+
+            return WrapDragPreview(text, new Thickness(9, 6, 9, 6));
+        }
+        catch (Exception ex)
+        {
+            ShellLog.Error(ex, $"drag preview failed id={item.Id}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The chip the preview shows: the palette's own surface, line and 6px radius, so a dragged
+    /// clip reads as the row that left the list rather than as a tooltip. The preview window
+    /// cannot be transparent — WPF drops to software rendering the moment a window allows it, and
+    /// a juddering preview is worse than square corners — so the window behind this is filled with
+    /// the same Surface brush and the rounding shows in the border, not in the silhouette.
+    /// </summary>
+    private Border WrapDragPreview(UIElement content, Thickness padding) => new()
+    {
+        Background = (WpfBrush)FindResource("Surface"),
+        BorderBrush = (WpfBrush)FindResource("Line"),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(6),
+        Padding = padding,
+        Child = content,
+    };
+
+    /// <summary>
+    /// The picture a drag of this item should show, when it has one. An image item points at its
+    /// stored asset; a single dropped image file is the same thing arriving as a path, and both
+    /// want the picture rather than a card with a file name on it. Anything else — a video, a
+    /// document — is left to the card, because getting a frame out of it means a shell call this
+    /// path cannot afford.
+    /// </summary>
+    private static string? DragPreviewImagePath(ClipboardHistoryItem item)
+    {
+        if (item.Kind == ClipboardItemKind.Image && item.AssetPath is { } asset && File.Exists(asset))
+        {
+            return asset;
+        }
+
+        if (item.Kind == ClipboardItemKind.Files && item.FilePaths.Count == 1)
+        {
+            var path = item.FilePaths[0];
+            if (File.Exists(path) && IsImageFile(Path.GetExtension(path).ToLowerInvariant()))
+            {
+                return path;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The words on a text card. Files show their name — the whole point of dragging one out —
+    /// with a count when the clip carries several; everything else shows the start of its text.
+    /// </summary>
+    private static string DragPreviewLabelFor(ClipboardHistoryItem item)
+    {
+        if (item.Kind != ClipboardItemKind.Files)
+        {
+            return DragPreview.CardLabel(TextPayload(item));
+        }
+
+        if (item.FilePaths.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var path = item.FilePaths[0];
+        // A trailing separator on a folder would otherwise leave GetFileName with nothing to say.
+        var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var label = DragPreview.CardLabel(string.IsNullOrWhiteSpace(name) ? path : name);
+        return item.FilePaths.Count > 1 ? $"{label}  +{item.FilePaths.Count - 1} more" : label;
     }
 
     /// <summary>
