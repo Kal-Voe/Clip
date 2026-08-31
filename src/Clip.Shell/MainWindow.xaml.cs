@@ -4127,6 +4127,8 @@ public partial class MainWindow : Window
         {
             if (e.ClickCount >= 2)
             {
+                // Disarm: the first click of the pair armed a drag, and this one is a paste.
+                _rowDragOrigin = null;
                 SelectItem(item, "double-click-paste");
                 PasteSelected();
                 e.Handled = true;
@@ -4134,6 +4136,9 @@ public partial class MainWindow : Window
             }
 
             SelectItem(item, "click");
+            // Arm a possible drag out of the palette. Nothing is handled here, so this press is
+            // still an ordinary click; only travel past the system threshold turns it into one.
+            _rowDragOrigin = (e.GetPosition(this), item);
         };
         row.MouseRightButtonUp += (_, e) =>
         {
@@ -4142,6 +4147,157 @@ public partial class MainWindow : Window
             e.Handled = true;
         };
         return row;
+    }
+
+    /// <summary>Where a press on a row started, and on which item, while it is still undecided.</summary>
+    private (System.Windows.Point Origin, ClipboardHistoryItem Item)? _rowDragOrigin;
+
+    /// <summary>
+    /// Turns a held press on a row into a drag out of the palette, using the same
+    /// click-versus-drag rule the top and bottom bars already use for window drags: below the
+    /// system threshold nothing happens here at all, so a click still selects and a double-click
+    /// still pastes. The handler sits on the list rather than on each row because a fast drag
+    /// leaves the row it started on within a frame or two, and the following moves are then
+    /// raised by whichever row the pointer crossed — the armed item has to come from the field,
+    /// not from the element that reported the move.
+    /// </summary>
+    private void OnListMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_rowDragOrigin is not { } armed)
+        {
+            return;
+        }
+
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            _rowDragOrigin = null;
+            return;
+        }
+
+        var moved = e.GetPosition(this) - armed.Origin;
+        if (!ShouldStartRowDrag(
+            moved.X,
+            moved.Y,
+            SystemParameters.MinimumHorizontalDragDistance,
+            SystemParameters.MinimumVerticalDragDistance))
+        {
+            return;
+        }
+
+        _rowDragOrigin = null;
+        BeginRowDrag(armed.Item);
+    }
+
+    /// <summary>
+    /// Whether a press that has travelled this far should become a drag. Thresholds are passed in
+    /// rather than read from <see cref="SystemParameters"/> so the rule is decidable without a
+    /// desktop; the caller supplies the real ones.
+    /// </summary>
+    internal static bool ShouldStartRowDrag(double movedX, double movedY, double minimumX, double minimumY) =>
+        Math.Abs(movedX) >= minimumX || Math.Abs(movedY) >= minimumY;
+
+    /// <summary>
+    /// Drags an item out to another window.
+    ///
+    /// The palette is topmost and sits over the middle of the screen, so the field being aimed at
+    /// is almost always underneath it — a drop would land on the palette itself. So the palette is
+    /// concealed the moment the drag starts: the OLE drag loop belongs to the OS, not to this
+    /// window, so it runs to completion whether or not the source is still on screen, and this
+    /// leaves the target visible for the whole gesture. Conceal is the same teardown a paste does,
+    /// which is what keeps the outside-click watch and the low-level mouse hook from being left
+    /// running behind a window that is no longer there.
+    ///
+    /// <see cref="DragDrop.DoDragDrop"/> is modal: it does not return until the button comes up or
+    /// the drag is cancelled. A completed drop ends the visit, exactly as a paste does. A drag that
+    /// dropped on nothing — Escape, or a release over the desktop — brings the palette back, so a
+    /// misfire costs a reopen rather than the whole list.
+    /// </summary>
+    private void BeginRowDrag(ClipboardHistoryItem item)
+    {
+        var hydrated = ClipboardItemForPasteFormat(item);
+        if (BuildDragData(hydrated, _settings.DefaultPasteFormat) is not { } data)
+        {
+            return;
+        }
+
+        // Same reason the window drag drops capture first: the row would otherwise keep the mouse
+        // and stay stuck in its hover visual, never seeing the button-up the OS loop now owns.
+        Mouse.Capture(null);
+        ConcealPalette("drag-out");
+
+        System.Windows.DragDropEffects effect;
+        try
+        {
+            // Copy only. Dragging a clip out is a copy of history, never a move: the row has to
+            // still be there afterwards, so no target is ever offered Move.
+            effect = System.Windows.DragDrop.DoDragDrop(this, data, System.Windows.DragDropEffects.Copy);
+        }
+        catch (Exception ex)
+        {
+            ShellLog.Error(ex, "row drag failed");
+            effect = System.Windows.DragDropEffects.None;
+        }
+
+        ShellLog.Info($"row drag id={item.Id} kind={item.Kind} effect={effect}");
+        if (effect == System.Windows.DragDropEffects.None)
+        {
+            ShowPalette();
+        }
+    }
+
+    /// <summary>
+    /// Fills the drag's data object from <see cref="ClipboardDragData"/>. Null when the item has
+    /// nothing to offer, which is the signal not to start a drag at all — an empty data object
+    /// would give every target the no-drop cursor and look like a bug.
+    /// </summary>
+    private System.Windows.DataObject? BuildDragData(ClipboardHistoryItem item, PasteFormatPreference pasteFormat)
+    {
+        var payload = ClipboardDragData.Create(item, pasteFormat);
+        if (payload.IsEmpty)
+        {
+            return null;
+        }
+
+        var data = new System.Windows.DataObject();
+        if (payload.Text is { } text)
+        {
+            // Both names for the same string. Modern targets ask for UnicodeText; a few older ones
+            // only ever ask for Text, and this is the format that has to work in a plain field.
+            data.SetText(text.Text, System.Windows.TextDataFormat.UnicodeText);
+            data.SetText(text.Text, System.Windows.TextDataFormat.Text);
+            if (text.Html is not null)
+            {
+                data.SetText(text.Html, System.Windows.TextDataFormat.Html);
+            }
+
+            if (text.Rtf is not null)
+            {
+                data.SetText(text.Rtf, System.Windows.TextDataFormat.Rtf);
+            }
+        }
+
+        var paths = payload.FilePaths.Where(p => File.Exists(p) || Directory.Exists(p)).ToArray();
+        if (paths.Length > 0)
+        {
+            data.SetData(System.Windows.DataFormats.FileDrop, paths);
+        }
+
+        if (payload.BitmapPath is { } bitmapPath && File.Exists(bitmapPath))
+        {
+            try
+            {
+                // SetImage is safe here in a way Clipboard.SetImage is not: nothing flushes, so
+                // the FailFast that a big photo triggered on the clipboard path cannot run. A
+                // decode that fails still leaves the FileDrop above, which most targets prefer.
+                data.SetImage(LoadBitmap(bitmapPath));
+            }
+            catch (Exception ex)
+            {
+                ShellLog.Error(ex, $"drag bitmap decode failed path={bitmapPath}");
+            }
+        }
+
+        return data;
     }
 
     private void OnTitleTextMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

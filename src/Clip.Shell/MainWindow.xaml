@@ -412,7 +412,11 @@
                                       ClipToBounds="True"
                                       ScrollChanged="OnListScrollChanged"
                                       PreviewMouseWheel="OnListWheel">
-                            <StackPanel x:Name="ItemsHost" ClipToBounds="True" Margin="0,0,0,8"/>
+                            <!-- One MouseMove for the whole list, not one per row: a fast drag
+                                 leaves its starting row immediately, and the moves that decide
+                                 the drag are then raised by the rows it passes over. -->
+                            <StackPanel x:Name="ItemsHost" ClipToBounds="True" Margin="0,0,0,8"
+                                        MouseMove="OnListMouseMove"/>
                         </ScrollViewer>
                         <!-- The one thing pinning could not do: start an item that was never a
                              copy. It floats at the top right of the list rather than in the footer,
