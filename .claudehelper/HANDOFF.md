@@ -3,6 +3,29 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Both bars drag, buttons included (2026-08-31, v1.3.6)
+
+Isaiah: dragging should work from the buttons in the top bar too, and from the bottom bar, and from
+the search field when it is empty — but a press in the search field with text in it is a selection.
+
+Now a click-versus-drag rule, the same one a real title bar uses. The press is armed on the Shell's
+**tunnel** handlers (`PreviewMouseLeftButtonDown`) and deliberately never marked handled, so it still
+reaches whatever was under it and every chip and footer key behaves exactly as before. Only once the
+pointer passes `SystemParameters.MinimumHorizontal/VerticalDragDistance` does it convert into a
+window drag. That is why a button can be a grab handle without losing its click.
+
+`BeginWindowDrag` drops **two** captures: `Mouse.Capture(null)` so the button the drag started on
+does not stay stuck in its pressed visual (it will never see the button-up), and `ReleaseCapture()`
+without which the OS non-client loop refuses to start.
+
+The decision itself is `MainWindow.ShouldArmChromeDrag`, pure and unit-tested — including the case
+its test caught: before the first layout every ActualHeight is 0, and `y >= 0 - 0` would have made
+the entire window a grab handle.
+
+Verified on the running app: drag from the All chip, a footer keycap, blank footer, the empty search
+field and blank top bar all move the window; a click on the Text chip selects the filter and moves
+the window 0,0.
+
 ## Always centred, and draggable by the top bar (2026-08-31, v1.3.5)
 
 Isaiah: _"a lot of the time it does not open in the center"_, and he wants to drag it by blank space

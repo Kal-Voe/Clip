@@ -289,7 +289,10 @@
             TextOptions.TextRenderingMode="Grayscale"
             TextOptions.TextHintingMode="Auto"
             ClipToBounds="True"
-            SizeChanged="OnShellSizeChanged">
+            SizeChanged="OnShellSizeChanged"
+            PreviewMouseLeftButtonDown="OnChromeMouseDown"
+            PreviewMouseMove="OnChromeMouseMove"
+            PreviewMouseLeftButtonUp="OnChromeMouseUp">
         <Grid x:Name="RootGrid">
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="SearchRowDef" Height="53"/>
@@ -297,24 +300,24 @@
                 <RowDefinition x:Name="FooterRowDef" Height="34"/>
             </Grid.RowDefinitions>
 
-            <!-- The drag surface, full-bleed and first so it sits behind everything in the row. The
-                 search field and the chips are in front and take their own clicks, so only blank
-                 space reaches it.
-
+            <!-- Gives the blank part of the top bar pixels to be grabbed by, nothing more.
                  #01000000 — alpha 1 of 255 — and NOT Transparent. The palette is a layered window
                  for the acrylic, and a layered window is click-through wherever its alpha is zero:
                  the OS never delivers the click at all, so WPF's "Transparent is hit-testable" rule
                  never gets a say. Measured: grabbing blank top bar did nothing, while the one spot
                  that dragged turned out to be the painted search field. One step of alpha is
-                 invisible over the blur and is enough to make the pixels belong to the window. -->
-            <Border Grid.Row="0" Background="#01000000" MouseLeftButtonDown="OnChromeMouseDown"/>
+                 invisible over the blur and is enough to make the pixels belong to the window.
+
+                 The drag is armed on the Shell's tunnel handlers rather than here, so that grabbing
+                 a button drags the window too — see OnChromeMouseDown. -->
+            <Border Grid.Row="0" Background="#01000000"/>
 
             <!-- Transparent, never Bg: the Shell below already paints the Bg sheet, so painting it
                  again here stacked a second 65% layer inset by the margin and squared off at the
                  corners — the "dark rectangle behind the controls". Transparent and not null on
-                 purpose: a null Background is not hit-testable, and OnChromeMouseDown is what drags
-                 the window. Do not "tidy" this back to a brush. -->
-            <Grid Grid.Row="0" Background="Transparent" Margin="12,10" MouseLeftButtonDown="OnChromeMouseDown">
+                 purpose: a null Background is not hit-testable, and the top bar is draggable.
+                 Do not "tidy" this back to a brush. -->
+            <Grid Grid.Row="0" Background="Transparent" Margin="12,10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>

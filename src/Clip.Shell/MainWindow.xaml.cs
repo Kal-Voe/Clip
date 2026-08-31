@@ -9728,22 +9728,116 @@ public partial class MainWindow : Window
         ShowStyledMenu(actions, FilesFilterShell);
     }
 
+    /// <summary>Where a press on the top or bottom bar started, while it is still undecided.</summary>
+    private System.Windows.Point? _chromeDragOrigin;
+
     /// <summary>
-    /// Drag the palette by any blank space in the top bar.
-    ///
-    /// This hands the drag to the OS (WM_NCLBUTTONDOWN with HTCAPTION) instead of calling
-    /// DragMove(). DragMove throws if the button is already up by the time it runs — a real race on
-    /// a flick of the wrist — and this window is ShowActivated=False and topmost, which is exactly
-    /// the shape DragMove is least reliable on. The non-client drag loop is what a title bar
-    /// actually uses, so it also gets snap and the modifier behaviours for free.
+    /// Arms a possible window drag from the top or bottom bar. Deliberately does NOT handle the
+    /// event: this is the tunnel pass, so the press still reaches whatever was under it and a
+    /// filter chip or a footer button behaves exactly as before. Only once the pointer travels past
+    /// the system drag threshold does <see cref="OnChromeMouseMove"/> convert it into a window
+    /// drag, which is the same click-versus-drag rule a real title bar uses — so the bars are
+    /// draggable everywhere without any button losing its click.
     /// </summary>
     private void OnChromeMouseDown(object sender, MouseButtonEventArgs e)
     {
+        _chromeDragOrigin = null;
         if (e.ChangedButton != MouseButton.Left)
         {
             return;
         }
 
+        var armed = ShouldArmChromeDrag(
+            e.GetPosition(RootGrid).Y,
+            SearchRowDef.ActualHeight,
+            RootGrid.ActualHeight,
+            FooterRowDef.ActualHeight,
+            IsWithin(e.OriginalSource as DependencyObject, SearchShell),
+            SearchBox.Text.Length);
+
+        if (armed)
+        {
+            _chromeDragOrigin = e.GetPosition(this);
+        }
+    }
+
+    /// <summary>
+    /// Whether a press should be allowed to become a window drag. The top and bottom bars are grab
+    /// handles and everything between them is content; the one carve-out is the search field, where
+    /// a press is a text selection whenever there is text to select. With the field empty there is
+    /// nothing to select, so it behaves like the rest of the bar.
+    /// </summary>
+    internal static bool ShouldArmChromeDrag(
+        double y,
+        double headerHeight,
+        double rootHeight,
+        double footerHeight,
+        bool overSearchField,
+        int searchTextLength)
+    {
+        if (overSearchField && searchTextLength > 0)
+        {
+            return false;
+        }
+
+        if (rootHeight <= 0)
+        {
+            // Before the first layout every ActualHeight is 0, and "below rootHeight - footerHeight"
+            // would then be true everywhere — the whole window would read as a grab handle.
+            return y <= headerHeight;
+        }
+
+        return y <= headerHeight || y >= rootHeight - footerHeight;
+    }
+
+    private void OnChromeMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_chromeDragOrigin is not { } origin)
+        {
+            return;
+        }
+
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            _chromeDragOrigin = null;
+            return;
+        }
+
+        var moved = e.GetPosition(this) - origin;
+        if (Math.Abs(moved.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(moved.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        _chromeDragOrigin = null;
+        BeginWindowDrag();
+    }
+
+    private void OnChromeMouseUp(object sender, MouseButtonEventArgs e) => _chromeDragOrigin = null;
+
+    private static bool IsWithin(DependencyObject? node, DependencyObject ancestor)
+    {
+        for (; node is not null; node = VisualTreeHelper.GetParent(node))
+        {
+            if (ReferenceEquals(node, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Hands the drag to the OS (WM_NCLBUTTONDOWN with HTCAPTION) instead of calling DragMove().
+    /// DragMove throws if the button is already up by the time it runs — a real race on a flick of
+    /// the wrist — and this window is ShowActivated=False and topmost, which is the shape DragMove
+    /// is least reliable on. The non-client loop is what a title bar uses, so snapping and the
+    /// modifier behaviours come for free.
+    /// </summary>
+    private void BeginWindowDrag()
+    {
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == IntPtr.Zero)
         {
@@ -9752,11 +9846,12 @@ public partial class MainWindow : Window
 
         try
         {
-            // WPF holds the mouse capture from the button-down; the OS loop needs it released or
-            // the drag never starts.
+            // Two different captures to drop. WPF's, so the button the drag started on does not
+            // stay stuck in its pressed visual and never fires a Click on the button-up it will
+            // now never see; and the OS's, without which the non-client loop refuses to start.
+            Mouse.Capture(null);
             _ = ReleaseCapture();
             _ = SendMessage(hwnd, WmNcLButtonDown, new IntPtr(HtCaption), IntPtr.Zero);
-            e.Handled = true;
         }
         catch (Exception ex)
         {
