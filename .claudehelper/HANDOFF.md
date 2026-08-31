@@ -1,5 +1,39 @@
 # Clip — handoff
 
+_Last updated 2026-08-31. **`main` is the trunk.** Committed, **not pushed and not installed** —
+the drag work below is only in the working tree's history until you say otherwise._
+
+## Drag from the preview, and drag a multi-selection (2026-08-31, commit a7a0f1e)
+
+Items 2 and 3 of the list below, done together because they share one drag path.
+
+- **The preview pane drags.** Same gesture as a row: press, travel past the system threshold, same
+  data and same thumbnail, for whatever item is previewed. The arming/threshold half of
+  `OnListMouseMove` is now `TryStartArmedDrag`, shared by both, so there is still one rule and one
+  `BeginRowDrag`. The handlers are on the preview's outer Border and **bubble**: a press inside the
+  text preview is handled by the TextBox to place the caret and never reaches them, so selecting
+  text in the preview is untouched — a text clip is dragged from its row instead. The
+  expanded-image overlay is checked explicitly so a drag can never fight the pan.
+- **Ctrl+click toggles, Shift+click extends a range.** The rules live in `PaletteMultiSelection`
+  (pure, tested). Two that are not Explorer's: the previewed row cannot be Ctrl+deselected, since
+  the preview, Enter and the action menu still follow the single `_selected`; and a plain press on
+  a member of the selection keeps the set and collapses on release, or the press that starts a drag
+  would throw the selection away first. Selected rows take the `Selected` fill and the
+  `SelectedBorder` outline is now what says which one the preview is showing.
+- **Multi-drag data** goes through `ClipboardDragData.CreateMany`: FileDrop is every path in
+  on-screen order, text is the items' texts joined by newlines and always plain, no bitmap (one
+  CF_BITMAP, several images), and a mixed selection gives a file target the files and a text target
+  the texts. The preview card shows "N items".
+- Keyboard, Enter/paste and the action menu are untouched and still single-item. 1270 tests green.
+
+### Next steps
+
+1. Verify by hand: drag the preview image into Explorer and into Slack; Ctrl/Shift-select three
+   screenshots and drag them into a folder; check a text preview still selects text with the mouse.
+2. Light theme — never looked at; every colour was tuned in dark.
+3. Revisit the .txt-on-desktop compromise with a CIDA data object, now that real drags are testable.
+
+
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
