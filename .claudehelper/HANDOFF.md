@@ -3,6 +3,25 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Selection by contrast, and the + back on the TODAY line (2026-08-31, v1.4.4)
+
+- **Selected chips** went grey fill -> accent outline -> **brighter neutral outline** (`Muted2`) plus
+  brighter ink. The fill sat heavy and filled the chevron half of the split pills; the accent put a
+  saturated red in a row that is otherwise all greys. Lifting the same neutral the labels already
+  use says "this one is on" with contrast rather than colour or mass.
+- **The + is back inline with the TODAY header**, 20px instead of 24 (with the 12px glyph that keeps
+  the inset a whole 6 physical pixels either side at 150%). The 36px band reserved at the top of the
+  scroller is gone again. Collisions are handled by **hiding the button once the list is scrolled**
+  (`OnListScrollChanged`, offset > 4) -- at rest nothing is under it, and scrolled it gets out of
+  the way, which is cheaper than reserving space no one wanted.
+
+**Stuck Shift, second data point:** it recurred, and this time it was the LEFT Shift where the first
+was the RIGHT. Alternating sides rules out a mechanically stuck key -- something is injecting a
+Shift-down without the matching up. Clip cannot be the source: it only ever injects modifier key-UPs
+(`ReleaseStuckModifiers`) and Ctrl+V, never a Shift-down. Prime suspect is whatever synthesises
+keystrokes on this machine; Wispr Flow is the dictation tool in the loop. Not worth a self-heal timer
+in Clip -- releasing a modifier the user is legitimately holding would be worse than the bug.
+
 ## No more grey fills, and the + stops colliding (2026-08-31, v1.4.3)
 
 Isaiah's notes on 1.4.2, all four visual.

@@ -405,7 +405,7 @@
                                       VerticalScrollBarVisibility="Hidden"
                                       HorizontalScrollBarVisibility="Disabled"
                                       ClipToBounds="True"
-                                      Padding="0,36,0,8"
+                                      Padding="0,0,0,8"
                                       ScrollChanged="OnListScrollChanged"
                                       PreviewMouseWheel="OnListWheel">
                             <StackPanel x:Name="ItemsHost" ClipToBounds="True"/>
@@ -419,16 +419,16 @@
                                 Style="{StaticResource IconButton}"
                                 Click="OnNewSnippetClick"
                                 ToolTip="New Snippet"
-                                Width="24"
-                                Height="24"
+                                Width="20"
+                                Height="20"
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Top"
-                                Margin="0,6,10,0"
+                                Margin="0,4,10,0"
                                 SnapsToDevicePixels="True"
                                 UseLayoutRounding="True">
-                            <!-- 24 and 12 on purpose: at 150% they are 36 and 18 physical pixels, so
-                                 the glyph's centre lands on a whole pixel. At 22/13 it fell on a half
-                                 pixel and the plus read as visibly off-centre. -->
+                            <!-- 20 and 12 on purpose: at 150% they are 30 and 18 physical pixels, so
+                                 the inset is a whole 6 either side. At 22/13 it fell on a half pixel
+                                 and the plus read as visibly off-centre. -->
                             <Image x:Name="NewSnippetIcon" Width="12" Height="12" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                         </Button>
                         <!-- Shown by UpdateEmptyState when a render leaves no rows: a blank column

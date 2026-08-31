@@ -10008,6 +10008,10 @@ public partial class MainWindow : Window
 
     private void OnListScrollChanged(object sender, ScrollChangedEventArgs e)
     {
+        // The + sits inline with the TODAY header, floating over the scroller. At the top there is
+        // nothing under it; scrolled, rows would slide beneath it, so it gets out of the way.
+        NewSnippetButton.Visibility = ListScroll.VerticalOffset > 4 ? Visibility.Hidden : Visibility.Visible;
+
         // Never append straight from the layout pass that raised this: appending re-lays out, which
         // raises it again, and the list renders itself in one cascade nothing else can interrupt.
         QueueDeferredAppend();
@@ -10562,11 +10566,12 @@ public partial class MainWindow : Window
 
     private void SetFilterVisual(WpfButton button, Border? shell, bool selected)
     {
-        // Selection is an accent outline and brighter ink, never a fill. The grey block this
-        // replaced sat heavily in the bar and looked worst on the split pills, where it filled the
-        // chevron half too. An outline reads as "this one is on" without adding another slab of
-        // colour to a row that already has six bounded controls in it.
-        var selectedOutline = (WpfBrush)FindResource("Accent");
+        // Selection is a brighter outline and brighter ink -- contrast, not colour and not a fill.
+        // The grey block this started as sat heavily in the bar and filled the chevron half of the
+        // split pills; the accent outline that replaced it put a saturated red in a row that is
+        // otherwise all greys. Lifting the same neutral the labels use says "this one is on"
+        // without introducing either.
+        var selectedOutline = (WpfBrush)FindResource("Muted2");
         button.Foreground = selected ? (WpfBrush)FindResource("Text") : (WpfBrush)FindResource("Muted");
         if (shell is not null)
         {
