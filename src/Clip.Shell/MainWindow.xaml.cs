@@ -9967,40 +9967,25 @@ public partial class MainWindow : Window
     private static bool IsMediaFilter(string filter) =>
         filter is "images" or "media-images" or "media-videos" or "media-audio";
 
-    /// <summary>
-    /// The themed brush keys a header filter chip wears in a given state. A null fill means
-    /// transparent — there is no "Transparent" resource. Pulled out of <see cref="SetFilterVisual"/>
-    /// because the whole point of the header is that a plain chip and a split pill are
-    /// indistinguishable: same outline at rest, same fill when chosen. That is a claim about three
-    /// brush keys and nothing about WPF, so it can be asserted without standing up a window.
-    /// </summary>
-    internal static (string? Fill, string Border, string Foreground) FilterChipBrushKeys(bool selected) =>
-        selected ? ("Selected", "SelectedBorder", "Text") : (null, "Line2", "Muted");
-
     private void SetFilterVisual(WpfButton button, Border? shell, bool selected)
     {
-        var (fillKey, borderKey, foregroundKey) = FilterChipBrushKeys(selected);
-        var fill = fillKey is null ? WpfBrushes.Transparent : (WpfBrush)FindResource(fillKey);
-        var outline = (WpfBrush)FindResource(borderKey);
-        button.Foreground = (WpfBrush)FindResource(foregroundKey);
-
+        var selectedBorder = (WpfBrush)FindResource("SelectedBorder");
+        var selectedFill = (WpfBrush)FindResource("Selected");
+        button.Foreground = selected ? (WpfBrush)FindResource("Text") : (WpfBrush)FindResource("Muted");
         if (shell is not null)
         {
-            // Split pill: the shell carries the whole look so the button half and the chevron half
-            // can never drift apart visually, and the halves stay transparent underneath it.
-            shell.Background = fill;
-            shell.BorderBrush = outline;
+            // Split pill: the shell carries the whole selected look so the button half and the
+            // chevron half can never drift apart visually. Unselected pills keep a neutral
+            // outline so the button+dropdown always reads as one bounded control.
+            shell.Background = selected ? selectedFill : WpfBrushes.Transparent;
+            shell.BorderBrush = selected ? selectedBorder : (WpfBrush)FindResource("Line2");
             button.Background = WpfBrushes.Transparent;
             button.BorderBrush = WpfBrushes.Transparent;
         }
         else
         {
-            // Plain chip: the button *is* its own shell, so it takes the identical pair. The
-            // unselected outline is the load-bearing half — a chip that only draws a box once it is
-            // chosen sits 2px shorter and unbounded next to the pills, which is exactly the
-            // staggered header this replaced.
-            button.Background = fill;
-            button.BorderBrush = outline;
+            button.Background = selected ? selectedFill : WpfBrushes.Transparent;
+            button.BorderBrush = selected ? selectedBorder : WpfBrushes.Transparent;
         }
     }
 

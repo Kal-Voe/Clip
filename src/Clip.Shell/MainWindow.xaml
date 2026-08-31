@@ -124,18 +124,10 @@
             <Setter Property="SelectionOpacity" Value="0.4"/>
         </Style>
 
-        <!-- 28 is the outer height of every header chip, plain button and split pill alike. The
-             template below already draws a 1px rounded box; it just never had a brush, so a plain
-             chip rendered as floating text beside a 30px outlined pill and the row read as
-             staggered. v1.1.14 settled the direction — the pills keep their full rectangle when
-             unselected — so the plain chips take that same outline rather than the pills losing
-             theirs. SetFilterVisual overrides BorderBrush per state; this is what a chip looks like
-             before any code runs, and what any chip added later inherits for free. -->
         <Style x:Key="FilterButton" TargetType="Button">
             <Setter Property="Height" Value="28"/>
             <Setter Property="Padding" Value="10,0"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource Line2}"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
             <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI"/>
@@ -168,19 +160,11 @@
             </Setter>
         </Style>
 
-        <!-- 26, not the inherited 28: these live inside a shell Border that adds 1px of outline on
-             each edge, so 26 is what makes the pill 28 tall overall — the same box as a plain chip.
-             It also puts the label's centre at 1+13=14px from the shell's top, which is where a
-             plain chip's centre lands, so the baselines line up and not just the outlines. -->
         <Style x:Key="PillSegmentLeft" TargetType="Button" BasedOn="{StaticResource FilterButton}">
-            <Setter Property="Height" Value="26"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <!-- 4, not 5: this sits inside the shell's 1px outline, so the shell's own
-                             inner arc is 5-1. At 5 the hover fill overflowed that arc by a pixel
-                             into the corner of the border. -->
-                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4,0,0,4">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="5,0,0,5">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -200,11 +184,10 @@
         </Style>
 
         <Style x:Key="PillSegmentRight" TargetType="Button" BasedOn="{StaticResource FilterButton}">
-            <Setter Property="Height" Value="26"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="0,4,4,0">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="0,5,5,0">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -261,10 +244,6 @@
             <Setter Property="Width" Value="28"/>
             <Setter Property="Height" Value="28"/>
             <Setter Property="Padding" Value="0"/>
-            <!-- Opts back out of the chip outline it just inherited. The gear and the expand-image
-                 overlay are bare glyphs floating on their surface, not bounded controls in a row of
-                 peers; boxing them would put an empty square in the footer and one over a photo. -->
-            <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource Muted2}"/>
         </Style>
 
