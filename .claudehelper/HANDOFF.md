@@ -3,6 +3,49 @@
 _Last updated 2026-08-31. **`main` is the trunk.** Committed, **not pushed and not installed** —
 the drag work below is only in the working tree's history until you say otherwise._
 
+## The .txt-on-desktop compromise is gone (2026-08-31, commit eb8cda3)
+
+Item 3 of the previous list. **"Drag clips out as files" is deleted**, and dropping a text, link or
+colour clip on the desktop or in a folder now always leaves a real file, while a drop into a text
+box still inserts text.
+
+The setting existed because CF_HDROP was the only way to name a file in a drag, and every app reads
+it: with it on, VS Code opened the file and Slack attached it instead of taking the text. The
+answer is **CFSTR_SHELLIDLIST** — a CIDA, built in `Clip.Core/ShellIdList.cs` from the temp file
+`ClipboardDragFile.Materialize` already knew how to write. Explorer and the desktop read it;
+Chromium does not. `BuildDragData` sets it on the branch that used to be gated (single item, no
+file paths of its own); everything else about the drag is untouched.
+
+**This was measured, not reasoned.** The harness is `scratchpad/dragprobe` (a WPF exe that builds
+the data object, starts a real OLE drag and drives the mouse with SendInput, so it runs unattended
+against real targets). Results:
+
+| data object | Explorer folder | desktop | Cursor (Electron/Chromium) |
+|---|---|---|---|
+| text + CIDA | creates the .txt, 5/5 | creates it | **inserts the text** |
+| text only | nothing, 5/5 | nothing | inserts the text |
+| text + CF_HDROP | creates it | — | **attaches the file** (the old bug) |
+| link: text + CFSTR_INETURLW | **nothing, 3/3** | — | — |
+| link: + CIDA | one .url, 3/3 | — | — |
+
+Two things worth keeping. **The comment on `UniformResourceLocatorW` was wrong**: Explorer does not
+materialise a .url from it — 0/3 — so links get their shortcut from the CIDA too now, and the
+comment says so. And **the first drag in a batch fails** unless the target window has had ~1.5s to
+actually take focus; that flake looks exactly like a rejected format and is what sank the earlier
+attempt's control case. It is the harness, not the format.
+
+Setting deleted rather than repurposed: its stated purpose is now the default, and the only thing
+left to toggle would be "also break Slack". If a non-shell, CF_HDROP-only file target ever turns up,
+the escape hatch is one line — put the materialised path back into FileDrop. 1274 tests green.
+
+### Next steps
+
+1. **Not clicked in the real palette.** The formats and both targets are proven through a real WPF
+   `DataObject` and a real OLE drag, but the probe is not Clip. Worth one pass: drag a text row onto
+   the desktop (a .txt should appear), then drag the same row into a Slack or VS Code message box
+   (the text should appear, not a file chip).
+2. Light theme — never looked at; every colour was tuned in dark.
+
 ## Drag from the preview, and drag a multi-selection (2026-08-31, commit a7a0f1e)
 
 Items 2 and 3 of the list below, done together because they share one drag path.
@@ -31,7 +74,7 @@ Items 2 and 3 of the list below, done together because they share one drag path.
 1. Verify by hand: drag the preview image into Explorer and into Slack; Ctrl/Shift-select three
    screenshots and drag them into a folder; check a text preview still selects text with the mouse.
 2. Light theme — never looked at; every colour was tuned in dark.
-3. Revisit the .txt-on-desktop compromise with a CIDA data object, now that real drags are testable.
+3. ~~Revisit the .txt-on-desktop compromise with a CIDA data object~~ — done, commit eb8cda3.
 
 
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
