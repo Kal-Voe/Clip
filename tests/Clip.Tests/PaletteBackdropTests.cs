@@ -10,19 +10,44 @@ namespace Clip.Tests;
 public sealed class PaletteBackdropTests
 {
     [Theory]
-    [InlineData(10, 22621, true)]   // Windows 11 22H2 — first build with DWMWA_SYSTEMBACKDROP_TYPE
+    [InlineData(10, 17134, true)]   // Windows 10 1803 — first build with ACCENT_ENABLE_ACRYLICBLURBEHIND
+    [InlineData(10, 19045, true)]   // Windows 10 22H2
     [InlineData(10, 26100, true)]   // Windows 11 24H2
-    [InlineData(10, 22000, false)]  // Windows 11 21H2 — attribute not there yet
-    [InlineData(10, 19045, false)]  // Windows 10 22H2
+    [InlineData(10, 17133, false)]  // one below the floor
+    [InlineData(10, 16299, false)]  // Windows 10 1709 — blur-behind, but not the acrylic one
     [InlineData(6, 22621, false)]   // nonsense major below 10 never qualifies
-    public void IsSupportedGatesOnWindows11Build22621(int major, int build, bool expected)
+    public void IsSupportedGatesOnWindows10Build17134(int major, int build, bool expected)
     {
         Assert.Equal(expected, PaletteBackdrop.IsSupported(new Version(major, 0, build)));
     }
 
     [Theory]
-    [InlineData("Bg", "#1A1A1A", "#A61A1A1A")]
-    [InlineData("Bg", "#F7F7F7", "#A6F7F7F7")]
+    // ABGR, not ARGB: alpha on top, then blue, green, and red in the LOW byte. A pure red tint has
+    // to come out 0x..0000FF and a pure blue one 0x..FF0000 — swap the two and every non-grey theme
+    // is tinted with the wrong colour.
+    [InlineData("#FF0000", 0xA6, 0xA60000FFu)]
+    [InlineData("#0000FF", 0xA6, 0xA6FF0000u)]
+    [InlineData("#00FF00", 0xA6, 0xA600FF00u)]
+    [InlineData("#1A1A1A", 0xA6, 0xA61A1A1Au)]  // the dark theme's Bg: grey hides the byte order
+    [InlineData("#F7F7F7", 0xA6, 0xA6F7F7F7u)]  // and so does the light theme's
+    [InlineData("#204080", 0x99, 0x99804020u)]
+    [InlineData("not a hex", 0xA6, 0xA6000000u)]  // anything unparseable tints from black
+    public void GradientColorPacksTheThemeHexAsAbgr(string hex, byte alpha, uint expected)
+    {
+        Assert.Equal(expected, PaletteBackdrop.GradientColor(hex, alpha));
+    }
+
+    [Fact]
+    public void TintAlphaStaysInTheBandWhereBlurAndLegibilityBothSurvive()
+    {
+        // The accent tint is the entire sheet of glass now, so this one byte is the palette's base
+        // opacity. Under 0x99 the desktop reads through hard enough to swim under 11px labels;
+        // over 0xB3 the blur stops being visible at all, which is the bug this replaced.
+        Assert.InRange(PaletteBackdrop.TintAlpha, (byte)0x99, (byte)0xB3);
+    }
+
+    [Theory]
+    [InlineData("Bg", "#1A1A1A", "#1A1A1A")]  // the sheet is the accent tint now, not a brush
     [InlineData("Surface", "#212121", "#5C212121")]
     [InlineData("Surface2", "#272727", "#5C272727")]
     [InlineData("Surface3", "#323232", "#5C323232")]
@@ -34,15 +59,15 @@ public sealed class PaletteBackdropTests
     [Fact]
     public void GlassHexKeepsAZoneWellShortOfOpaqueOnceItIsStackedOnTheSheet()
     {
-        // The Surface family is never seen on its own: it is always painted over the Bg sheet, so
-        // what the eye gets is 1-(1-aBg)*(1-aSurface). The palette read solid at CC/E6 because that
-        // product was 98%. This is the guard on the whole point of the change — the composite has
-        // to stay in the band where the desktop still blurs through but 13px text is comfortable.
-        var bg = int.Parse(PaletteBackdrop.GlassHex("Bg", "#1A1A1A")[1..3], NumberStyles.HexNumber) / 255.0;
+        // The Surface family is never seen on its own: it is always painted over the acrylic tint,
+        // so what the eye gets is 1-(1-aTint)*(1-aSurface). The palette read solid at CC/E6 because
+        // that product was 98%. This is the guard on the whole point of the change — the composite
+        // has to stay in the band where the desktop still blurs through but 13px text is comfortable.
+        var sheet = PaletteBackdrop.TintAlpha / 255.0;
         var surface = int.Parse(PaletteBackdrop.GlassHex("Surface", "#212121")[1..3], NumberStyles.HexNumber) / 255.0;
-        var zone = 1 - ((1 - bg) * (1 - surface));
+        var zone = 1 - ((1 - sheet) * (1 - surface));
 
-        Assert.InRange(bg, 0.60, 0.70);
+        Assert.InRange(sheet, 0.60, 0.70);
         Assert.InRange(zone, 0.75, 0.80);
     }
 
@@ -62,9 +87,9 @@ public sealed class PaletteBackdropTests
     }
 
     [Theory]
-    [InlineData(800, 520, 8, 8)]
+    [InlineData(800, 520, 14, 14)]
     [InlineData(800, 520, 0, 0)]     // fullscreen and expanded-image flatten the radius to 0
-    [InlineData(10, 800, 8, 5)]      // never more than half the shorter side
+    [InlineData(10, 800, 14, 5)]     // never more than half the shorter side
     public void ShellClipGeometryRoundsToTheShellRadius(double width, double height, double radius, double expected)
     {
         var clip = MainWindow.ShellClipGeometry(width, height, radius);
@@ -105,8 +130,9 @@ public sealed class PaletteBackdropTests
     [Fact]
     public void TranslucentBackgroundDefaultsOnAndSurvivesMissingKey()
     {
-        // A settings.json written before the feature has no TranslucentBackground key at all;
-        // deserializing must land on the default (on), not off.
+        // Back on by default now that the blur is real: 1.2.4 turned it off only because the DWM
+        // backdrop behind it painted a flat grey sheet. A settings.json written before the feature
+        // has no TranslucentBackground key at all, so the default is what those installs get.
         var settings = JsonSerializer.Deserialize<ClipShellSettings>("{}");
         Assert.NotNull(settings);
         Assert.True(settings!.TranslucentBackground);
@@ -115,10 +141,10 @@ public sealed class PaletteBackdropTests
     [Fact]
     public void ShellCornerRadiusMatchesTheXamlThatActuallyPaintsIt()
     {
-        // The glass backdrop makes the window background transparent, so DWM's clip and the Shell
-        // border's fill are both visible and any disagreement shows as two nested arcs per corner.
-        // The constant and the XAML literal are edited in different files; this is what keeps a
-        // change to one from silently re-opening that bug.
+        // The palette is a layered window, so nothing below the Shell border rounds it — this
+        // radius is the entire silhouette, and the code that flattens it for fullscreen reads the
+        // constant while the resting shape comes from the XAML literal. They are edited in
+        // different files; this is what keeps them from drifting apart.
         var xaml = File.ReadAllText(RepoPath("src", "Clip.Shell", "MainWindow.xaml"));
         var shell = xaml.IndexOf("x:Name=\"Shell\"", StringComparison.Ordinal);
         Assert.True(shell >= 0, "MainWindow.xaml no longer declares a Border named Shell.");

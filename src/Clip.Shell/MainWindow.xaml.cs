@@ -82,9 +82,12 @@ internal sealed class ClipShellSettings
     public bool ShowSourceAppInList { get; set; } = true;
 
     /// <summary>
-    /// The acrylic glass look: DWM backdrop blur behind the palette with semi-transparent
-    /// background brushes over it. On by default; silently falls back to the opaque palette on
-    /// builds older than Windows 11 22H2 or when DWM refuses (see PaletteBackdrop).
+    /// The acrylic glass look: real blur-behind sampled from the desktop, with the interior zones
+    /// as light tints over it. On by default. It was off for 1.2.4 only because 1.2.0-1.2.3 shipped
+    /// a DWM backdrop that painted a flat grey sheet instead of blurring anything — see
+    /// PaletteBackdrop for the measurement. Now that the blur is real, the default is on again.
+    /// Falls back silently to the opaque palette on builds older than Windows 10 1803, or if the
+    /// compositor refuses the accent policy.
     /// </summary>
     public bool TranslucentBackground { get; set; } = true;
 
@@ -1053,9 +1056,13 @@ public partial class MainWindow : Window
             _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             _source?.AddHook(WndProc);
             var hwnd = new WindowInteropHelper(this).Handle;
-            ApplyRoundedWindowCorners(hwnd);
+            // No ApplyRoundedWindowCorners here on purpose: the palette is layered
+            // (AllowsTransparency, for the acrylic) and DWM does not round layered windows, so the
+            // call would be a no-op that reads like the thing keeping the corners round. The Shell
+            // border's CornerRadius is what rounds the palette. The other windows still call it.
+            //
             // The constructor's theme pass ran before the hwnd existed, so it resolved to the
-            // opaque palette; now that the window is real, re-theme so the acrylic backdrop
+            // opaque palette; now that the window is real, re-theme so the acrylic blur
             // (if enabled and supported) can actually take.
             ApplyTheme(_settings.Theme, save: false);
             _lastClipboardSequenceNumber = GetClipboardSequenceNumber();
@@ -1866,9 +1873,9 @@ public partial class MainWindow : Window
         }
         else
         {
-            // Fallback to the old behavior: truly hide the window. An AllowsTransparency=False,
-            // topmost, dark-background WPF window left at Opacity=0 can leave a stale BLACK surface
-            // on a secondary monitor (DWM compositing glitch) until something forces a repaint.
+            // Fallback to the old behavior: truly hide the window. A topmost WPF window left at
+            // Opacity=0 can leave a stale surface on a secondary monitor (DWM compositing glitch)
+            // until something forces a repaint.
             Hide();
         }
 
@@ -2248,16 +2255,25 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>True only while DWM has actually accepted the acrylic backdrop for this window.</summary>
+    /// <summary>True only while the compositor has actually accepted the acrylic blur for this window.</summary>
     private bool _backdropActive;
 
     /// <summary>
-    /// Syncs the DWM backdrop with the Translucent background setting. Called from ApplyTheme so
+    /// The ABGR tint the accent policy is currently carrying. Kept so a reveal can re-assert the
+    /// exact same glass without re-running the whole theme pass.
+    /// </summary>
+    private uint _backdropTint;
+
+    /// <summary>
+    /// Syncs the acrylic blur with the Translucent background setting. Called from ApplyTheme so
     /// theme changes, the settings toggle, and the post-SourceInitialized re-theme all go through
     /// one path. Before the hwnd exists this resolves to opaque; InitializeShell re-runs the theme
     /// once the window is real.
+    ///
+    /// Takes the background hex rather than reading the Bg brush, because ApplyTheme has to run
+    /// this <em>before</em> SetBrush — the brushes it would read are still the previous theme's.
     /// </summary>
-    private void ApplyBackdropPreference()
+    private void ApplyBackdropPreference(string backgroundHex)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == IntPtr.Zero)
@@ -2267,30 +2283,34 @@ public partial class MainWindow : Window
         }
 
         var wantGlass = _settings.TranslucentBackground && PaletteBackdrop.IsSupported();
-        _backdropActive = wantGlass && PaletteBackdrop.TryApply(hwnd);
+        _backdropTint = PaletteBackdrop.GradientColor(backgroundHex, PaletteBackdrop.TintAlpha);
+        _backdropActive = wantGlass && PaletteBackdrop.TryApply(hwnd, _backdropTint);
         if (!wantGlass)
         {
-            // Toggled off (or unsupported build): make sure a previously-applied backdrop is gone
+            // Toggled off (or unsupported build): make sure a previously-applied blur is gone
             // rather than blurring behind a now-opaque palette.
             PaletteBackdrop.Remove(hwnd);
         }
 
-        // WPF clears its D3D surface with this color before painting brushes over it; left opaque
-        // it would sit between the blur and the semi-transparent Bg no matter what the brushes say.
+        // The window is layered either way (AllowsTransparency, see MainWindow.xaml), so the D3D
+        // clear colour is always transparent: with the glass on it would sit between the blur and
+        // the tints, and with the glass off it would square off the Shell's rounded corners.
         if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is { } target)
         {
-            target.BackgroundColor = _backdropActive
-                ? System.Windows.Media.Colors.Transparent
-                : ((SolidColorBrush)FindResource("Bg")).Color;
+            target.BackgroundColor = System.Windows.Media.Colors.Transparent;
         }
 
-        ShellLog.Info($"backdrop preference applied want={_settings.TranslucentBackground} supported={PaletteBackdrop.IsSupported()} active={_backdropActive}");
+        // The blur ignores WPF's per-pixel alpha, so turning the glass on has to bring the window
+        // region with it and turning it off has to take it away again.
+        UpdatePaletteWindowRegion();
+
+        ShellLog.Info($"backdrop preference applied want={_settings.TranslucentBackground} supported={PaletteBackdrop.IsSupported()} tint={_backdropTint:X8} active={_backdropActive}");
     }
 
     /// <summary>
-    /// Cloak/uncloak keeps the window alive but round-trips it through the compositor; per-window
-    /// DWM state is exactly the kind of thing that can quietly not survive that. Re-asserting the
-    /// backdrop is one flag write, so every reveal pays it rather than trusting the compositor.
+    /// Cloak/uncloak keeps the window alive but round-trips it through the compositor, and
+    /// per-window composition state is exactly the thing that does not survive that. Re-asserting
+    /// the accent policy is one call, so every reveal pays it rather than trusting the compositor.
     /// </summary>
     private void ReassertBackdropAfterReveal()
     {
@@ -2300,10 +2320,10 @@ public partial class MainWindow : Window
         }
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd != IntPtr.Zero && !PaletteBackdrop.TryApply(hwnd))
+        if (hwnd != IntPtr.Zero && !PaletteBackdrop.TryApply(hwnd, _backdropTint))
         {
-            // DWM said no this time (driver reset, DWM restart). Re-theme opaque rather than
-            // leave a see-through window with nothing behind it.
+            // The compositor said no this time (driver reset, DWM restart). Re-theme opaque rather
+            // than leave a see-through window with nothing behind it.
             ApplyTheme(_settings.Theme, save: false);
         }
     }
@@ -9032,19 +9052,25 @@ public partial class MainWindow : Window
             _ => IsWindowsDarkMode(),
         };
 
-        // Backdrop first: SetBrush below alpha-blends the background brushes only when the DWM
-        // acrylic actually took, so a failed apply degrades to the plain opaque palette instead
-        // of a see-through window.
-        ApplyBackdropPreference();
+        // Backdrop first: SetBrush below alpha-blends the zone brushes only when the acrylic
+        // actually took, so a failed apply degrades to the plain opaque palette instead of a
+        // see-through window. It also needs the new Bg before Bg is set, hence the local.
+        var bgHex = useDark ? "#1A1A1A" : "#F7F7F7";
+        ApplyBackdropPreference(bgHex);
 
-        SetBrush("Bg", useDark ? "#1A1A1A" : "#F7F7F7");
+        SetBrush("Bg", bgHex);
         SetBrush("Surface", useDark ? "#212121" : "#FFFFFF");
         SetBrush("Surface2", useDark ? "#272727" : "#EDEDED");
         SetBrush("Surface3", useDark ? "#323232" : "#DCDCDC");
         SetBrush("Line", useDark ? "#494949" : "#B8B8B8");
         SetBrush("Line2", useDark ? "#5A5A5A" : "#989898");
         SetBrush("Text", useDark ? "#F1F1F1" : "#1A1A1A");
-        SetBrush("Muted", useDark ? "#989898" : "#646464");
+        // Muted carries the 11-12px labels (INFORMATION, the footer captions, the search
+        // placeholder) and it is the first thing to go thin once there is a real blurred desktop
+        // under it instead of a flat sheet. Raised here rather than by thickening the glass:
+        // Muted is opaque and independent of the tint, so this buys legibility without buying back
+        // the opacity the whole change exists to remove.
+        SetBrush("Muted", useDark ? "#A3A3A3" : "#585858");
         SetBrush("Muted2", useDark ? "#BBBBBB" : "#474747");
         SetBrush("Muted3", useDark ? "#777777" : "#6A6A6A");
         // Raycast palette: fixed brand red (#FF6363) used sparingly, never the Windows accent.
@@ -9058,10 +9084,11 @@ public partial class MainWindow : Window
         SetBrush("SelectedBorder", useDark ? "#525252" : "#ACACAC");
         SetBrush("TextSelection", useDark ? "#FF6363" : "#D64545");
         SetBrush("Danger", useDark ? "#D56B5D" : "#B94A3D");
-        // With glass on, the window's own background must not paint over the DWM blur; the Shell
-        // border (rounded, semi-opaque Bg) becomes the visible surface — which also makes its
-        // 14px corner radius the real silhouette instead of being buried under an opaque fill.
-        Background = _backdropActive ? WpfBrushes.Transparent : (WpfBrush)FindResource("Bg");
+        // The window itself never paints: it is layered, so an opaque window background would
+        // square off the Shell's rounded corners whether the glass is on or not. The Shell is the
+        // silhouette. With the glass on it paints nothing at all — the acrylic tint IS the sheet
+        // now, and a second Bg sheet on top of it is exactly what made the old look read as solid.
+        Shell.Background = _backdropActive ? WpfBrushes.Transparent : (WpfBrush)FindResource("Bg");
         _setHtmlPreviewBackground?.Invoke(ToDrawingColor((SolidColorBrush)FindResource("Surface")));
 
         // Browser-backed previews bake theme colors into their generated pages, so a theme
@@ -11168,12 +11195,16 @@ public partial class MainWindow : Window
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
 
     /// <summary>
-    /// Must stay equal to the radius DWMWCP_ROUND gives the window below, and to the Shell
-    /// border's CornerRadius in XAML. DWM clips the window; the Shell paints the surface. With
-    /// the glass backdrop on, the window background is transparent, so a content radius that
-    /// disagrees with the clip shows up as two nested arcs in every corner.
+    /// Must stay equal to the Shell border's CornerRadius in XAML — a test asserts it, because the
+    /// constant and the literal live in different files.
+    ///
+    /// Back to 14. It was cut to 8 to match DWMWCP_ROUND while DWM was the thing clipping the
+    /// window; the palette is a layered window now (AllowsTransparency, for the acrylic), and DWM
+    /// does not round layered windows, so the Shell's own radius is the only silhouette left and
+    /// there is nothing to match. DWM rounding stays on for the settings and hotkey-help windows,
+    /// which are not layered and still rely on it.
     /// </summary>
-    internal const double ShellCornerRadius = 8;
+    internal const double ShellCornerRadius = 14;
 
     /// <summary>
     /// The rounded clip the Shell needs in addition to ClipToBounds. Border.ClipToBounds clips to
@@ -11201,8 +11232,41 @@ public partial class MainWindow : Window
     /// its CornerRadius — the fullscreen and expanded-image paths flatten the radius to 0, and a
     /// clip left rounded there would shave the corners off a full-screen video.
     /// </summary>
-    private void UpdateShellClip() =>
+    private void UpdateShellClip()
+    {
         Shell.Clip = ShellClipGeometry(Shell.ActualWidth, Shell.ActualHeight, Shell.CornerRadius.TopLeft);
+        UpdatePaletteWindowRegion();
+    }
+
+    /// <summary>
+    /// Keeps the window region in step with the Shell's shape while the glass is on. The acrylic
+    /// blur is painted across the whole window rectangle regardless of what WPF drew, so without a
+    /// region the palette's rounded corners have four wedges of tinted blur outside the arc — see
+    /// <see cref="PaletteBackdrop.ClipToRoundedRect"/>. Riding on UpdateShellClip is deliberate:
+    /// every path that changes the Shell's size or radius already calls it, including the two that
+    /// flatten the radius to 0, and a region left rounded there would shave the corners off a
+    /// full-screen video.
+    /// </summary>
+    private void UpdatePaletteWindowRegion()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (!_backdropActive)
+        {
+            // With the glass off nothing paints outside the Shell, so WPF's per-pixel alpha rounds
+            // the corners on its own — and does it with antialiasing, which a region cannot.
+            PaletteBackdrop.ClearClip(hwnd);
+            return;
+        }
+
+        // The region is in physical pixels; the radius is in DIPs. On this machine that is 14 -> 21.
+        var scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        PaletteBackdrop.ClipToRoundedRect(hwnd, (int)Math.Round(Shell.CornerRadius.TopLeft * scale));
+    }
 
     private void OnShellSizeChanged(object sender, SizeChangedEventArgs e) => UpdateShellClip();
 
@@ -13846,7 +13910,7 @@ internal sealed class SettingsWindow : Window
         var supported = PaletteBackdrop.IsSupported();
         var description = supported
             ? "Let the desktop blur through the palette, like the Windows 11 flyouts."
-            : "Unavailable: needs Windows 11 22H2 or later.";
+            : "Unavailable: needs Windows 10 1803 or later.";
 
         var dropdown = StyledDropdown(
             _settings.TranslucentBackground ? "On" : "Off",

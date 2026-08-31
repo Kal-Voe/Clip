@@ -1,4 +1,20 @@
-﻿<Window x:Class="Clip.Shell.MainWindow"
+﻿<!-- AllowsTransparency="True" is load-bearing, not a leftover. It is the only way to get a layered
+     window, and a layered window is what ACCENT_ENABLE_ACRYLICBLURBEHIND needs to actually blur the
+     desktop behind the palette (PaletteBackdrop has the measured proof that the DWM backdrop it
+     replaced never sampled the desktop at all). The standing objection to AllowsTransparency is that
+     it disables ClearType — that objection does not apply here: this window deliberately sets
+     TextOptions.TextRenderingMode="Grayscale" below, so there is no subpixel rendering to lose.
+     Do not revert this on the ClearType argument.
+
+     It also cannot be toggled after the window is created, which is why it is unconditionally True
+     rather than driven by the Translucent background setting: the window is always layered, and the
+     setting only controls whether the accent policy is applied and whether the Shell paints a sheet.
+     That keeps the toggle instant instead of "takes effect next launch".
+
+     Background is Transparent for the same reason: on a layered window the Shell border's rounded
+     CornerRadius is the real silhouette, and a window background painted behind it would square the
+     corners back off. ApplyTheme paints the Shell, not the window. -->
+<Window x:Class="Clip.Shell.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Clip"
@@ -8,8 +24,8 @@
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         ShowActivated="False"
-        Background="#1F1E1F"
-        AllowsTransparency="False"
+        Background="Transparent"
+        AllowsTransparency="True"
         Topmost="True"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
@@ -258,14 +274,13 @@
         </Style>
     </Window.Resources>
 
-    <!-- 8 is DWM's own DWMWCP_ROUND radius, and DWM is what actually clips the window. While the
-         palette was opaque its background painted to the window edge and this radius never showed,
-         so it could be anything; with the glass backdrop the window background is transparent and
-         both silhouettes are visible at once — a 14px fill inside an 8px clip reads as two
-         mismatched arcs at every corner. There is no API to widen DWM's radius, so the content
-         matches it instead, which is also what the Windows 11 flyouts do. -->
+    <!-- 14 is the palette's own radius again. It was cut to 8 only to match DWMWCP_ROUND, back when
+         DWM was what clipped the window; a layered window does not get DWM's corner rounding at all,
+         so this Border is now the only silhouette there is — and it draws with real per-pixel alpha,
+         so the arc is antialiased rather than clipped. Keep this equal to
+         MainWindow.ShellCornerRadius; a test asserts it. -->
     <Border x:Name="Shell"
-            CornerRadius="8"
+            CornerRadius="14"
             Background="{DynamicResource Bg}"
             UseLayoutRounding="True"
             SnapsToDevicePixels="True"
