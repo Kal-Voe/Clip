@@ -4185,7 +4185,7 @@ public partial class MainWindow : Window
         }
 
         _rowDragOrigin = null;
-        BeginRowDrag(armed.Item);
+        BeginRowDrag(armed.Item, sender as DependencyObject);
     }
 
     /// <summary>
@@ -4199,20 +4199,20 @@ public partial class MainWindow : Window
     /// <summary>
     /// Drags an item out to another window.
     ///
-    /// The palette is topmost and sits over the middle of the screen, so the field being aimed at
-    /// is almost always underneath it — a drop would land on the palette itself. So the palette is
-    /// concealed the moment the drag starts: the OLE drag loop belongs to the OS, not to this
-    /// window, so it runs to completion whether or not the source is still on screen, and this
-    /// leaves the target visible for the whole gesture. Conceal is the same teardown a paste does,
-    /// which is what keeps the outside-click watch and the low-level mouse hook from being left
-    /// running behind a window that is no longer there.
+    /// Ordering here is load-bearing and was got wrong once. The palette is topmost over the middle
+    /// of the screen, so the field being aimed at is usually underneath it, and the first attempt
+    /// concealed the palette and then called DoDragDrop. No drag ever started. WinShot's history
+    /// window does the same gesture and works, and the difference is that it calls DoDragDrop from
+    /// the element under the pointer while its window is still up. So: start the drag first, then
+    /// get out of the way from inside the first GiveFeedback, which only runs once the OLE loop is
+    /// already spinning and owns the mouse.
     ///
     /// <see cref="DragDrop.DoDragDrop"/> is modal: it does not return until the button comes up or
     /// the drag is cancelled. A completed drop ends the visit, exactly as a paste does. A drag that
     /// dropped on nothing — Escape, or a release over the desktop — brings the palette back, so a
     /// misfire costs a reopen rather than the whole list.
     /// </summary>
-    private void BeginRowDrag(ClipboardHistoryItem item)
+    private void BeginRowDrag(ClipboardHistoryItem item, DependencyObject? source)
     {
         var hydrated = ClipboardItemForPasteFormat(item);
         if (BuildDragData(hydrated, _settings.DefaultPasteFormat) is not { } data)
@@ -4220,25 +4220,51 @@ public partial class MainWindow : Window
             return;
         }
 
+        // The drag source must be a live element in a window that is still up — passing the Window
+        // itself, or an element of a window already concealed, is what silently produced no drag.
+        var dragSource = source ?? ItemsHost;
+
         // Same reason the window drag drops capture first: the row would otherwise keep the mouse
         // and stay stuck in its hover visual, never seeing the button-up the OS loop now owns.
         Mouse.Capture(null);
-        ConcealPalette("drag-out");
+
+        var concealed = false;
+        System.Windows.GiveFeedbackEventHandler feedback = (_, e) =>
+        {
+            e.UseDefaultCursors = true;
+            e.Handled = true;
+            if (concealed)
+            {
+                return;
+            }
+
+            // First feedback tick: the loop has the mouse now, so the palette can leave without
+            // taking the drag with it. Conceal is the same teardown a paste does, which is what
+            // keeps the outside-click watch and the low-level mouse hook from being left running
+            // behind a window that is no longer there.
+            concealed = true;
+            ConcealPalette("drag-out");
+        };
 
         System.Windows.DragDropEffects effect;
+        System.Windows.DragDrop.AddGiveFeedbackHandler(dragSource, feedback);
         try
         {
             // Copy only. Dragging a clip out is a copy of history, never a move: the row has to
             // still be there afterwards, so no target is ever offered Move.
-            effect = System.Windows.DragDrop.DoDragDrop(this, data, System.Windows.DragDropEffects.Copy);
+            effect = System.Windows.DragDrop.DoDragDrop(dragSource, data, System.Windows.DragDropEffects.Copy);
         }
         catch (Exception ex)
         {
             ShellLog.Error(ex, "row drag failed");
             effect = System.Windows.DragDropEffects.None;
         }
+        finally
+        {
+            System.Windows.DragDrop.RemoveGiveFeedbackHandler(dragSource, feedback);
+        }
 
-        ShellLog.Info($"row drag id={item.Id} kind={item.Kind} effect={effect}");
+        ShellLog.Info($"row drag id={item.Id} kind={item.Kind} concealed={concealed} effect={effect}");
         if (effect == System.Windows.DragDropEffects.None)
         {
             ShowPalette();

@@ -3,6 +3,30 @@
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Drag a clip straight into a field (2026-08-31, v1.5.0)
+
+Rows in the list are OLE drag sources now: drag one out and drop it into any field. Text/Link give
+UnicodeText (honouring DefaultPasteFormat, so a drag and a paste of the same row agree), Files give
+FileDrop plus a text fallback, Images give a bitmap plus FileDrop at the asset. Copy only -- the row
+is never removed. Arming reuses the click-versus-drag rule from the window chrome, so a click still
+selects and a double-click still pastes.
+
+**The ordering is the whole feature, and the first attempt had it backwards.** The palette is topmost
+over the middle of the screen, so it concealed itself and *then* called `DoDragDrop` -- and no drag
+ever started, silently. Isaiah pointed at WinShot, which does this gesture and works
+(`HistoryWindow.xaml.cs OnTileMouseMove`): it calls `DoDragDrop` from the element under the pointer
+while its window is still up. Clip does that now and conceals from inside the first `GiveFeedback`,
+which only fires once the OLE loop already owns the mouse.
+
+**Verified end to end rather than reasoned about.** A private drop-target window (so nothing could
+land in a real app) received: `FORMATS: Text, UnicodeText, System.String`, the item's 179 characters,
+and the log recorded `row drag kind=Text concealed=True effect=Copy`. Before the reorder the same
+test produced no log line and no drop at all.
+
+Also in this build: hover stopped filling grey (chips and Open/Edit light their outline; pill halves
+brighten their ink), and the list scrolls to the footer divider instead of being clipped 8px above it
+-- the trailing gap was ScrollViewer Padding, which shrinks the viewport, and is a content margin now.
+
 ## Selection by contrast, and the + back on the TODAY line (2026-08-31, v1.4.4)
 
 - **Selected chips** went grey fill -> accent outline -> **brighter neutral outline** (`Muted2`) plus
