@@ -43,7 +43,7 @@ If you trust the source, click **More info**, then **Run anyway**. The full sour
 - Color swatches for copied hex colors.
 - Source app metadata and item information panel.
 - Local debug logs with `Ctrl+Shift+L`.
-- Settings for theme, startup, updates, history limits, storage, hotkeys, paste format, and excluded apps.
+- Settings for startup, updates, history limits, storage, hotkeys, paste format, and excluded apps.
 
 ## Project Status
 
