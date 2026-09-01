@@ -4263,7 +4263,7 @@ public partial class MainWindow : Window
 
             // Outline, never a fill, and the same bright one the chips and the Open button use --
             // Line2 was too close to the row's own dark to register as hover on the wider monitors.
-            row.BorderBrush = (WpfBrush)FindResource("Muted2");
+            row.BorderBrush = (WpfBrush)FindResource("MutedBright");
         };
         row.MouseLeave += (_, _) =>
         {
@@ -5206,7 +5206,7 @@ public partial class MainWindow : Window
                 {
                     // Outline only, the palette's rule everywhere except the previewed row.
                     row.Background = WpfBrushes.Transparent;
-                    row.BorderBrush = (WpfBrush)FindResource("Muted2");
+                    row.BorderBrush = (WpfBrush)FindResource("MutedBright");
                 };
                 row.MouseLeave += (_, _) =>
                 {
@@ -5258,7 +5258,7 @@ public partial class MainWindow : Window
 
         var (row, _) = _menuRows[index];
         row.Background = WpfBrushes.Transparent;
-        row.BorderBrush = (WpfBrush)FindResource("Muted2");
+        row.BorderBrush = (WpfBrush)FindResource("MutedBright");
     }
 
     /// <summary>
@@ -6074,7 +6074,7 @@ public partial class MainWindow : Window
         var left = new TextBlock
         {
             Text = label,
-            Foreground = (WpfBrush)FindResource("Muted2"),
+            Foreground = (WpfBrush)FindResource("MutedBright"),
             VerticalAlignment = VerticalAlignment.Center,
             FontSize = 12,
         };
@@ -9850,7 +9850,7 @@ public partial class MainWindow : Window
         (WpfBrush)FindResource("Surface3"),
         (WpfBrush)FindResource("Text"),
         (WpfBrush)FindResource("Muted"),
-        (WpfBrush)FindResource("Muted2"),
+        (WpfBrush)FindResource("MutedBright"),
         (WpfBrush)FindResource("Line"),
         (WpfBrush)FindResource("Line2"),
         (WpfBrush)FindResource("Accent"),
@@ -10354,8 +10354,7 @@ public partial class MainWindow : Window
         // Muted is opaque and independent of the tint, so this buys legibility without buying back
         // the opacity the whole change exists to remove.
         SetBrush("Muted", MutedHex);
-        SetBrush("Muted2", "#BBBBBB");
-        SetBrush("Muted3", "#777777");
+        SetBrush("MutedBright", "#BBBBBB");
         // Raycast palette: fixed brand red (#FF6363) used sparingly, never the Windows accent.
         SetBrush("Accent", "#FF6363");
         SetBrush("TextCursor", "#FF6363");
@@ -10447,12 +10446,12 @@ public partial class MainWindow : Window
         // The display sizes here must match the Width/Height on the matching Image in
         // MainWindow.xaml - that is what sets each icon's real line weight (see IconPen).
         SearchGlyphIcon.Source = RenderChromeIcon(ChromeIconKind.Search, "Muted", 14);
-        SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "Muted2", 16);
-        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "Muted2", 12);
-        DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "Muted2", ChevronDisplaySize);
-        FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "Muted2", ChevronDisplaySize);
-        MediaDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, IsMediaFilter(_kindFilter) ? "Text" : "Muted2", ChevronDisplaySize);
-        ExpandImageIcon.Source = RenderChromeIcon(ChromeIconKind.Expand, "Muted2", 15);
+        SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "MutedBright", 16);
+        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "MutedBright", 12);
+        DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "MutedBright", ChevronDisplaySize);
+        FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "MutedBright", ChevronDisplaySize);
+        MediaDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, IsMediaFilter(_kindFilter) ? "Text" : "MutedBright", ChevronDisplaySize);
+        ExpandImageIcon.Source = RenderChromeIcon(ChromeIconKind.Expand, "MutedBright", 15);
         _chromeIconsReady = true;
     }
 
@@ -10676,7 +10675,7 @@ public partial class MainWindow : Window
 
     private ImageSource RenderItemVectorIcon(ItemVectorIconKind kind, int size, double displaySize)
     {
-        var color = BrushHex("Muted2");
+        var color = BrushHex("MutedBright");
         var cacheKey = $"item-vector|{kind}|{size}|{displaySize:0.##}|{color}";
         lock (SvgCacheGate)
         {
@@ -10686,9 +10685,9 @@ public partial class MainWindow : Window
             }
         }
 
-        var stroke = new SolidColorBrush(((SolidColorBrush)FindResource("Muted2")).Color);
+        var stroke = new SolidColorBrush(((SolidColorBrush)FindResource("MutedBright")).Color);
         stroke.Freeze();
-        var fill = new SolidColorBrush(((SolidColorBrush)FindResource("Muted2")).Color) { Opacity = 0.16 };
+        var fill = new SolidColorBrush(((SolidColorBrush)FindResource("MutedBright")).Color) { Opacity = 0.16 };
         fill.Freeze();
         var pen = IconPen(stroke, displaySize);
 
@@ -11438,7 +11437,7 @@ public partial class MainWindow : Window
     {
         // Resolved per hover, not captured once: the brush would otherwise be the one that existed
         // at startup and would keep painting the dark theme's outline after a switch to light.
-        border.MouseEnter += (_, _) => border.BorderBrush = (WpfBrush)FindResource("Muted2");
+        border.MouseEnter += (_, _) => border.BorderBrush = (WpfBrush)FindResource("MutedBright");
         border.MouseLeave += (_, _) => restore();
     }
 
@@ -11449,7 +11448,7 @@ public partial class MainWindow : Window
         // split pills; the accent outline that replaced it put a saturated red in a row that is
         // otherwise all greys. Lifting the same neutral the labels use says "this one is on"
         // without introducing either.
-        var selectedOutline = (WpfBrush)FindResource("Muted2");
+        var selectedOutline = (WpfBrush)FindResource("MutedBright");
         button.Foreground = selected ? (WpfBrush)FindResource("Text") : (WpfBrush)FindResource("Muted");
         if (shell is not null)
         {
@@ -11869,7 +11868,7 @@ public partial class MainWindow : Window
         var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
         // Keyed by the theme's icon color: the rasterized SVGs bake it in, and a theme-free key
         // kept serving the old theme's rendering after a switch.
-        var cacheKey = $"file-icon|{ext}|{size}|{BrushHex("Muted2")}";
+        var cacheKey = $"file-icon|{ext}|{size}|{BrushHex("MutedBright")}";
         if (TryGetCachedRaster(cacheKey, out var cached))
         {
             return cached;
@@ -11913,7 +11912,7 @@ public partial class MainWindow : Window
 
     private ImageSource RenderSvg(string fileName, int size, double scaleX = 1.0, string? color = null)
     {
-        var actualColor = color ?? BrushHex("Muted2");
+        var actualColor = color ?? BrushHex("MutedBright");
         var cacheKey = $"{fileName}|{size}|{scaleX:0.###}|{actualColor}";
         lock (SvgCacheGate)
         {
@@ -13738,7 +13737,7 @@ internal sealed class ExcludedAppPickerWindow : Window
     }
 }
 
-internal sealed record SettingsPalette(WpfBrush Bg, WpfBrush Surface, WpfBrush Surface2, WpfBrush Surface3, WpfBrush Text, WpfBrush Muted, WpfBrush Muted2, WpfBrush Line, WpfBrush Line2, WpfBrush Accent, WpfBrush AccentSoft, WpfBrush Selected, WpfBrush SelectedBorder);
+internal sealed record SettingsPalette(WpfBrush Bg, WpfBrush Surface, WpfBrush Surface2, WpfBrush Surface3, WpfBrush Text, WpfBrush Muted, WpfBrush MutedBright, WpfBrush Line, WpfBrush Line2, WpfBrush Accent, WpfBrush AccentSoft, WpfBrush Selected, WpfBrush SelectedBorder);
 
 internal sealed class SettingsWindow : Window
 {
@@ -13856,7 +13855,7 @@ internal sealed class SettingsWindow : Window
     private WpfBrush _surface3 = WpfBrushes.Transparent;
     private WpfBrush _text = WpfBrushes.Black;
     private WpfBrush _muted = WpfBrushes.Gray;
-    private WpfBrush _muted2 = WpfBrushes.LightGray;
+    private WpfBrush _mutedBright = WpfBrushes.LightGray;
     private WpfBrush _line = WpfBrushes.Transparent;
     private WpfBrush _line2 = WpfBrushes.Transparent;
     private WpfBrush _accent = WpfBrushes.Teal;
@@ -14144,7 +14143,7 @@ internal sealed class SettingsWindow : Window
         _surface3 = palette.Surface3;
         _text = palette.Text;
         _muted = palette.Muted;
-        _muted2 = palette.Muted2;
+        _mutedBright = palette.MutedBright;
         _line = palette.Line;
         _line2 = palette.Line2;
         _accent = palette.Accent;
@@ -15531,7 +15530,7 @@ internal sealed class SettingsWindow : Window
             Template = SubtleSettingsButtonTemplate(),
             FocusVisualStyle = null,
         };
-        button.MouseEnter += (_, _) => button.BorderBrush = _muted2;
+        button.MouseEnter += (_, _) => button.BorderBrush = _mutedBright;
         button.MouseLeave += (_, _) => button.BorderBrush = _line;
         return button;
     }
