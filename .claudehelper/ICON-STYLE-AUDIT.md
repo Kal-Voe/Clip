@@ -171,8 +171,9 @@ One dark theme, no light-mode leftovers.
   `Muted2` → `MutedBright`, `Muted3` deleted.
 - The remaining hex literals are **not** stray tokens and should stay: syntax
   colours in `CodePreviewPage`, the `JankHarness` test values, the app tile cream.
-  One is worth a look on its own merits — `MediaPreviewPage` accents the video
-  player `#8ab4ff` blue while the app's accent is `#FF6363` red.
+  One looked like an inconsistency and is not: `MediaPreviewPage` accents the video
+  player `#8ab4ff` blue against the app's `#FF6363` red. **Asked and answered — Isaiah
+  explicitly does not mind the blue. Leave it.**
 - Font sizes are fine: 11/12/13/15/16/18. The stray `8` was the pinned-row bullet
   and is gone.
 
@@ -192,8 +193,12 @@ popup where every other panel is 8. **Both fixed**; the rest stays.
   square corners, system font, hanging off a dark app (`Clip.Watcher/Program.cs`).
 - **6 stock Win32 `MessageBox.Show` dialogs** (1 in Watcher, 5 in Shell).
 
-Both are outside the palette entirely. Lower priority than the icons — they are modal
-and brief — but they are the two places the illusion breaks completely.
+Both are outside the palette entirely, and they are the two places the illusion breaks
+completely.
+
+**Deferred on purpose, not forgotten.** Isaiah has not raised either, both are brief and
+modal, and a long stretch of chrome work had already run ahead of what he was actually
+asking for. Pick these up when he mentions them, not before.
 
 ---
 
@@ -223,11 +228,16 @@ and brief — but they are the two places the illusion breaks completely.
 6. Re-skin the tray menu and replace the MessageBoxes — still open.
 7. Deduplicate `OpenWithWindow` / `ExcludedAppPickerWindow` — still open.
 
-### What replaced the step 4 fork
+### What replaced the step 4 fork — CLOSED
 
-The fork is closed. Neither option was taken — see section 1 for what shipped and why
-a category scheme was the wrong shape for the problem.
+Neither option was taken. Lucide was never adopted; the category scheme was rejected
+because any such scheme needs a hand-maintained extension list, and the bug that started
+this was a gap in exactly such a list. See section 1 for what shipped.
 
-The residue is small: redraw `file-icon-plaintext.svg` and `file-icon-audio.svg` on the
-24 grid so the last two third-party SVGs match the hand-drawn set. No list required,
-two icons, and they are the two most-seen non-file marks in the app.
+The residue is also done: `file-icon-plaintext.svg` and `file-icon-audio.svg` are drawn
+on the 24 grid now (`919dcf2`, `8a0d0e2`).
+
+**End state: every icon in Clip is drawn on a 24 grid at one derived line weight, and
+the app ships zero image assets besides its own `.ico`.** The `Svg` NuGet package stays —
+`FaviconCache` needs it for sites that serve an SVG favicon, which is unrelated to any of
+this and is commented as such.
