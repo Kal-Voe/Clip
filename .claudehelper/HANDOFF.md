@@ -1855,4 +1855,11 @@ ICON-STYLE-AUDIT.md so nobody re-"fixes" them:
 2. `MediaPreviewPage` accents the video player `#8ab4ff` blue while the app
    accent is `#FF6363` red. Visible change — propose, don't just do.
 3. Re-skin the WinForms tray menu and the 6 stock `MessageBox.Show` dialogs.
-4. Deduplicate `OpenWithWindow` / `ExcludedAppPickerWindow`.
+4. ~~Deduplicate the app row~~ — done (`f8cdef6`). The two copies had already
+   drifted: one trimmed an over-long subtitle, the other didn't, because only one
+   showed a string long enough to expose it. Shared static, not a base class.
+   Still duplicated between the two pickers: window chrome, search field, footer,
+   `IconForApp` (a cache dictionary each), `BrowseForApp`/`AcceptSelection`/
+   `OnKeyDown` — ~200 lines apiece. A shared `AppPickerWindow` base would fix it
+   but that's a new abstraction in a file two sessions keep editing; wants
+   Isaiah's appetite for churn, not just a judgement call.
