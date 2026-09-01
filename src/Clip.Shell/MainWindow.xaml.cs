@@ -4226,11 +4226,15 @@ public partial class MainWindow : Window
 
         if (item.IsPinned)
         {
-            var pin = new TextBlock
+            // A drawn dot, not a bullet character. This was the app's last font glyph standing in
+            // for a mark: its size came from Segoe's bullet metrics at FontSize 8 rather than from
+            // anything we set, so it was the one dot in the window we did not actually control.
+            // It looks the same on screen - that is the point, a pushpin is mush at this size.
+            var pin = new System.Windows.Shapes.Ellipse
             {
-                Text = "●",
-                Foreground = (WpfBrush)FindResource("Muted"),
-                FontSize = 8,
+                Width = 5,
+                Height = 5,
+                Fill = (WpfBrush)FindResource("Muted"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(8, 0, 0, 0),
             };
