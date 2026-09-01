@@ -55,13 +55,24 @@ public sealed class LongTextPreviewTests : IDisposable
         {
             if (Directory.Exists(_root))
             {
-                Directory.Delete(_root, recursive: true);
+                // TestTemp.Delete, like every other ClipboardHistoryStore teardown in this suite.
+                // This one rolled its own Directory.Delete with no retry, and caught IOException
+                // but not UnauthorizedAccessException - which is what Windows throws when the
+                // handle is still open rather than merely busy. Its two siblings
+                // (ClipboardHistoryStoreCoverageTests, ClipboardHistoryStoreDeepCoverageTests)
+                // catch both, and one of them names the cause: background sidecar writes race the
+                // cleanup. An exception out of Dispose fails the class, so this was the one
+                // teardown in the suite that could turn that race into a red run.
+                TestTemp.Delete(_root);
             }
         }
         catch (IOException)
         {
             // Teardown file locks are a known source of red builds here; a leftover temp dir is
             // not worth failing a green test over.
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 }

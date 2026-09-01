@@ -219,7 +219,10 @@ public sealed class ClipboardDragFileMaterialiseTests : IDisposable
     {
         try
         {
-            Directory.Delete(_folder, recursive: true);
+            // TestTemp.Delete retries the handle-still-open case rather than giving up on the
+            // first throw. The bare catch below already made this teardown safe; going through
+            // the shared helper makes it actually clean up.
+            TestTemp.Delete(_folder);
         }
         catch
         {
