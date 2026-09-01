@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="42 32 68 100" width="152" height="152" role="img" aria-label="Text underline icon">
-  <g fill="#000000">
-    <path d="M50 44 Q50 37 57 37 H95 Q102 37 102 44 V54 Q102 61 95 61 Q88 61 88 54 V51 H82 V96 H89 Q96 96 96 103 Q96 110 89 110 H63 Q56 110 56 103 Q56 96 63 96 H70 V51 H64 V54 Q64 61 57 61 Q50 61 50 54 Z"/>
-    <rect x="51" y="118" width="50" height="9" rx="4.5"/>
-  </g>
-</svg>

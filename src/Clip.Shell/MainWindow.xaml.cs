@@ -70,18 +70,6 @@ internal sealed class ClipShellSettings
     public bool ShowSourceAppInList { get; set; } = true;
 
     /// <summary>
-    /// Put a real file in the drag as well as the text, so dropping a text or link clip on the
-    /// desktop saves a .txt or .url.
-    ///
-    /// On by default. The desktop drop is the one people ask for, and it is the only gesture that
-    /// cannot work without the file. The cost is real and stays documented rather than hidden:
-    /// apps that accept both a file and text from one drag mostly prefer the file, so VS Code
-    /// opens it and Slack and Gmail attach it instead of inserting the text. The setting is how
-    /// someone who lives in those apps trades back.
-    /// </summary>
-    public bool DragClipsAsFiles { get; set; } = true;
-
-    /// <summary>
     /// The acrylic glass look: real blur-behind sampled from the desktop, with the interior zones
     /// as light tints over it. On by default. It was off for 1.2.4 only because 1.2.0-1.2.3 shipped
     /// a DWM backdrop that painted a flat grey sheet instead of blurring anything — see
@@ -126,7 +114,6 @@ internal sealed class ClipShellSettings
         InstallUpdatesAutomatically = true;
         ExtractTextFromImages = false;
         ShowSourceAppInList = true;
-        DragClipsAsFiles = true;
         TranslucentBackground = true;
         CapturePaused = false;
         ClipboardFolderPath = null;
@@ -4205,7 +4192,7 @@ public partial class MainWindow : Window
         // thumbnail arrives late through the callback: each icon element belongs to exactly one
         // item and rows are rebuilt per render, so a swap landing on a discarded element is
         // harmless — no tag guard needed the way the shared header icon needs one.
-        icon.Source = IconFor(item, RowIconLogicalSize, preferRichPreview: true, onRicher: richer => icon.Source = richer);
+        icon.Source = IconFor(item, RowIconLogicalSize, preferRichPreview: true, onRicher: richer => icon.Source = richer, displaySize: RowIconSize(item));
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         AttachFavicon(icon, item);
         grid.Children.Add(icon);
@@ -4444,10 +4431,15 @@ public partial class MainWindow : Window
         }
 
         var hydrated = items.Select(item => ClipboardItemForPasteFormat(item)).ToList();
-        if (BuildDragData(hydrated, _settings.DefaultPasteFormat) is not { } data)
+        if (BuildDragData(hydrated, _settings.DefaultPasteFormat, out var shellOnlyFile) is not { } formats)
         {
             return;
         }
+
+        // The materialised .txt/.url is advertised only while the pointer is over Explorer or the
+        // desktop — see ShellAwareDragData. A clip with nothing to hide takes exactly the old
+        // path, as the plain DataObject it always was.
+        object data = shellOnlyFile is null ? formats : new ShellAwareDragData(formats, shellOnlyFile);
 
         // The drag source must be a live element in a window that is still up — passing the Window
         // itself, or an element of a window already concealed, is what silently produced no drag.
@@ -4719,11 +4711,18 @@ public partial class MainWindow : Window
     /// describes one link, and materialising a text clip as a file is a per-clip convenience whose
     /// cost (see MaterializeDragFile) is not worth paying several times over for a set that
     /// already has a text format every target can take.
+    ///
+    /// <paramref name="shellOnlyFile"/> comes back separately rather than in the data object
+    /// because it must not be advertised to everyone: it is the file Clip invented for this clip,
+    /// and only Explorer and the desktop are ever told about it. See ShellAwareDragData. Paths a
+    /// clip genuinely owns go straight into FileDrop here, for every target, as they always have.
     /// </summary>
     private System.Windows.DataObject? BuildDragData(
         IReadOnlyList<ClipboardHistoryItem> items,
-        PasteFormatPreference pasteFormat)
+        PasteFormatPreference pasteFormat,
+        out string? shellOnlyFile)
     {
+        shellOnlyFile = null;
         var payload = ClipboardDragData.CreateMany(items, pasteFormat);
         if (payload.IsEmpty)
         {
@@ -4765,13 +4764,12 @@ public partial class MainWindow : Window
                 new MemoryStream(Encoding.Unicode.GetBytes(link.Text.Trim() + "\0")));
         }
 
-        // Only when the item is not already files, and only when the user has asked for it: a
-        // FileDrop on a text clip changes what every other app does with the drag. See
-        // MaterializeDragFile.
-        if (paths.Count == 0 && single is not null && _settings.DragClipsAsFiles && payload.Text is { } fileText &&
-            MaterializeDragFile(single.Kind, fileText.Text) is { } materialized)
+        // Only when the item is not already files: the clip has no file of its own, so one is
+        // written for it — and handed back through shellOnlyFile rather than added here, because
+        // a FileDrop every target can see is exactly what turned a text drop into an attachment.
+        if (paths.Count == 0 && single is not null && payload.Text is { } fileText)
         {
-            paths.Add(materialized);
+            shellOnlyFile = MaterializeDragFile(single.Kind, fileText.Text);
         }
 
         if (paths.Count > 0)
@@ -4801,13 +4799,12 @@ public partial class MainWindow : Window
     /// Writes the clip out as a real file and returns its path, so a drop on the desktop leaves a
     /// .txt or a .url behind the way a dropped image leaves a .png.
     ///
-    /// Gated on a setting, on by default, because the FileDrop this produces is not free. Plenty
-    /// of apps prefer a file to text when a drag offers both — VS Code opens it in a new tab,
-    /// Slack and Gmail attach it — so the setting is what buys "drag text into a field" back for
-    /// anyone who wants it more than "drag text onto the desktop".
-    /// Format order cannot rescue that: WPF's DataObject keeps its formats in a hash table, so
-    /// the order the shell enumerates them in is not insertion order and is not even stable
-    /// between runs, and the apps that matter query for CF_HDROP by name regardless.
+    /// Written unconditionally, and then shown to almost nobody. Plenty of apps prefer a file to
+    /// text when a drag offers both — VS Code opens it in a new tab, Slack and Gmail attach it —
+    /// which is why this used to sit behind a "Drag clips out as files" setting: the two wanted
+    /// behaviours could not both be had from one static data object. ShellAwareDragData is what
+    /// retired that setting, by only advertising this path while the pointer is over Explorer or
+    /// the desktop, so the file costs a text field nothing.
     /// </summary>
     private static string? MaterializeDragFile(ClipboardItemKind kind, string text)
     {
@@ -5098,14 +5095,18 @@ public partial class MainWindow : Window
             }
             else if (action.Children.Count > 0)
             {
-                var arrow = new TextBlock
+                // The real chevron, not a typed '>' - the submenu marker was the one place in the
+                // app where a keyboard character stood in for an icon.
+                var arrow = new WpfImage
                 {
-                    Text = ">",
-                    Foreground = (WpfBrush)FindResource("Muted"),
-                    FontSize = 12,
+                    Source = RenderChromeIcon(ChromeIconKind.ChevronRight, "Muted", ChevronDisplaySize),
+                    Width = ChevronDisplaySize,
+                    Height = ChevronDisplaySize,
+                    Stretch = Stretch.Uniform,
                     Margin = new Thickness(20, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
+                RenderOptions.SetBitmapScalingMode(arrow, BitmapScalingMode.HighQuality);
                 Grid.SetColumn(arrow, 1);
                 grid.Children.Add(arrow);
             }
@@ -5443,7 +5444,7 @@ public partial class MainWindow : Window
             {
                 HeaderIcon.Source = richer;
             }
-        });
+        }, displaySize: 28);
         AttachFavicon(HeaderIcon, item);
         TitleText.Text = TitleFor(item);
         SubTitleText.Text = HeaderSubtitleFor(item);
@@ -8298,7 +8299,7 @@ public partial class MainWindow : Window
 
         PlaceholderIcon.Width = audioMark ? 72 : 128;
         PlaceholderIcon.Height = audioMark ? 72 : 128;
-        PlaceholderIcon.Source = IconFor(item, 240);
+        PlaceholderIcon.Source = IconFor(item, 240, displaySize: 128);
         PlaceholderText.Text = text;
         PlaceholderPreview.Visibility = Visibility.Visible;
     }
@@ -10444,13 +10445,15 @@ public partial class MainWindow : Window
 
     private void RefreshChromeIcons()
     {
-        SearchGlyphIcon.Source = RenderChromeIcon(ChromeIconKind.Search, "Muted");
-        SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "Muted2");
-        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "Muted2");
-        DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "Muted2");
-        FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "Muted2");
-        MediaDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, IsMediaFilter(_kindFilter) ? "Text" : "Muted2");
-        ExpandImageIcon.Source = RenderChromeIcon(ChromeIconKind.Expand, "Muted2");
+        // The display sizes here must match the Width/Height on the matching Image in
+        // MainWindow.xaml - that is what sets each icon's real line weight (see IconPen).
+        SearchGlyphIcon.Source = RenderChromeIcon(ChromeIconKind.Search, "Muted", 14);
+        SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "Muted2", 16);
+        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "Muted2", 12);
+        DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "Muted2", ChevronDisplaySize);
+        FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "Muted2", ChevronDisplaySize);
+        MediaDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, IsMediaFilter(_kindFilter) ? "Text" : "Muted2", ChevronDisplaySize);
+        ExpandImageIcon.Source = RenderChromeIcon(ChromeIconKind.Expand, "Muted2", 15);
         _chromeIconsReady = true;
     }
 
@@ -10476,6 +10479,7 @@ public partial class MainWindow : Window
     {
         Settings,
         ChevronDown,
+        ChevronRight,
         Expand,
         Search,
         Plus,
@@ -10491,19 +10495,74 @@ public partial class MainWindow : Window
         File,
     }
 
-    private ImageSource RenderChromeIcon(ChromeIconKind kind, string colorKey)
-    {
-        var color = ((SolidColorBrush)FindResource(colorKey)).Color;
-        var brush = new SolidColorBrush(color);
-        brush.Freeze();
+    /// <summary>
+    /// The app's one icon line weight, in real on-screen pixels.
+    ///
+    /// Every vector icon is drawn on a 24x24 grid and then scaled by whatever size its Image
+    /// element asks for, so a fixed pen thickness does NOT render at a fixed weight: the same
+    /// 2.2 pen came out 1.01px on an 11px chevron and 1.38px on the 15px expand arrows, the row
+    /// glyphs at 28px ran 2.10px, and the 128px placeholder glyph was a 9.6px blob. The gear's
+    /// hand-tuned 1.8 was a patch for exactly this, applied to one icon out of eleven.
+    ///
+    /// Deriving thickness from the display size puts every icon in the app on one weight.
+    /// ponytail: one knob - raise it if the set reads thin, lower it if it reads heavy.
+    /// </summary>
+    private const double IconStrokePx = 1.3;
+    private const double IconGrid = 24.0;
+    private const double ChevronDisplaySize = 11;
 
-        var pen = new WpfPen(brush, kind == ChromeIconKind.Settings ? 1.8 : 2.2)
+    private static WpfPen IconPen(WpfBrush brush, double displaySize)
+    {
+        var pen = new WpfPen(brush, IconStrokePx * IconGrid / Math.Max(1.0, displaySize))
         {
             StartLineCap = PenLineCap.Round,
             EndLineCap = PenLineCap.Round,
             LineJoin = PenLineJoin.Round,
         };
         pen.Freeze();
+        return pen;
+    }
+
+    /// <summary>
+    /// The chevron, drawn once. Both the filter dropdowns and the settings dropdowns want it,
+    /// and they used to carry byte-identical copies of these three points 3500 lines apart.
+    /// </summary>
+    internal static ImageSource RenderChevron(System.Windows.Media.Color color, double displaySize, bool pointRight = false)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        var pen = IconPen(brush, displaySize);
+
+        var drawing = new DrawingGroup();
+        drawing.Children.Add(new GeometryDrawing(WpfBrushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, 24, 24))));
+        drawing.Children.Add(new GeometryDrawing(null, pen, pointRight
+            ? PolylineGeometry(
+                new System.Windows.Point(9, 6.5),
+                new System.Windows.Point(14.5, 12),
+                new System.Windows.Point(9, 17.5))
+            : PolylineGeometry(
+                new System.Windows.Point(6.5, 9),
+                new System.Windows.Point(12, 14.5),
+                new System.Windows.Point(17.5, 9))));
+        drawing.Freeze();
+
+        var image = new System.Windows.Media.DrawingImage(drawing);
+        image.Freeze();
+        return image;
+    }
+
+    private ImageSource RenderChromeIcon(ChromeIconKind kind, string colorKey, double displaySize)
+    {
+        var color = ((SolidColorBrush)FindResource(colorKey)).Color;
+        if (kind is ChromeIconKind.ChevronDown or ChromeIconKind.ChevronRight)
+        {
+            return RenderChevron(color, displaySize, pointRight: kind == ChromeIconKind.ChevronRight);
+        }
+
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+
+        var pen = IconPen(brush, displaySize);
 
         var drawing = new DrawingGroup();
         drawing.Children.Add(new GeometryDrawing(WpfBrushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, 24, 24))));
@@ -10519,13 +10578,6 @@ public partial class MainWindow : Window
                         new System.Windows.Point(12 + Math.Cos(angle) * 7.1, 12 + Math.Sin(angle) * 7.1),
                         new System.Windows.Point(12 + Math.Cos(angle) * 9.6, 12 + Math.Sin(angle) * 9.6))));
                 }
-                break;
-
-            case ChromeIconKind.ChevronDown:
-                drawing.Children.Add(new GeometryDrawing(null, pen, PolylineGeometry(
-                    new System.Windows.Point(6.5, 9),
-                    new System.Windows.Point(12, 14.5),
-                    new System.Windows.Point(17.5, 9))));
                 break;
 
             case ChromeIconKind.Search:
@@ -10623,10 +10675,10 @@ public partial class MainWindow : Window
         return geometry;
     }
 
-    private ImageSource RenderItemVectorIcon(ItemVectorIconKind kind, int size)
+    private ImageSource RenderItemVectorIcon(ItemVectorIconKind kind, int size, double displaySize)
     {
         var color = BrushHex("Muted2");
-        var cacheKey = $"item-vector|{kind}|{size}|{color}";
+        var cacheKey = $"item-vector|{kind}|{size}|{displaySize:0.##}|{color}";
         lock (SvgCacheGate)
         {
             if (SvgImageCache.TryGetValue(cacheKey, out var cached))
@@ -10639,13 +10691,7 @@ public partial class MainWindow : Window
         stroke.Freeze();
         var fill = new SolidColorBrush(((SolidColorBrush)FindResource("Muted2")).Color) { Opacity = 0.16 };
         fill.Freeze();
-        var pen = new WpfPen(stroke, 1.8)
-        {
-            StartLineCap = PenLineCap.Round,
-            EndLineCap = PenLineCap.Round,
-            LineJoin = PenLineJoin.Round,
-        };
-        pen.Freeze();
+        var pen = IconPen(stroke, displaySize);
 
         var drawing = new DrawingGroup();
         drawing.Children.Add(new GeometryDrawing(WpfBrushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, 24, 24))));
@@ -11667,8 +11713,16 @@ public partial class MainWindow : Window
     /// and the rich thumbnail delivered on the dispatcher once a worker has it; callers without
     /// the callback keep the old synchronous behavior.
     /// </summary>
-    private ImageSource IconFor(ClipboardHistoryItem item, int size, bool preferRichPreview = true, Action<ImageSource>? onRicher = null)
+    private ImageSource IconFor(ClipboardHistoryItem item, int size, bool preferRichPreview = true, Action<ImageSource>? onRicher = null, double displaySize = 0)
     {
+        // size is the raster decode resolution; displaySize is the px the Image element actually
+        // shows, which is what sets a vector glyph's line weight. They are not the same number
+        // (rows decode at 96 and draw at 28) - a caller that omits it gets the old behavior.
+        if (displaySize <= 0)
+        {
+            displaySize = size;
+        }
+
         try
         {
             if (item.Kind == ClipboardItemKind.Color)
@@ -11679,13 +11733,13 @@ public partial class MainWindow : Window
             if (item.Kind == ClipboardItemKind.Image && item.AssetPath is not null && File.Exists(item.AssetPath))
             {
                 return preferRichPreview
-                    ? RowThumbnailOrGlyph(item.AssetPath, size, onRicher)
-                    : RenderItemVectorIcon(ItemVectorIconKind.Image, size);
+                    ? RowThumbnailOrGlyph(item.AssetPath, size, displaySize, onRicher)
+                    : RenderItemVectorIcon(ItemVectorIconKind.Image, size, displaySize);
             }
 
             if (item.Kind == ClipboardItemKind.Image)
             {
-                return RenderItemVectorIcon(ItemVectorIconKind.Image, size);
+                return RenderItemVectorIcon(ItemVectorIconKind.Image, size, displaySize);
             }
 
             if (item.Kind == ClipboardItemKind.Link)
@@ -11696,14 +11750,14 @@ public partial class MainWindow : Window
                 // domain monogram just showed the first letter of the mail host.
                 if (ClipboardLinkDetector.IsEmail(payload))
                 {
-                    return RenderItemVectorIcon(ItemVectorIconKind.Email, size);
+                    return RenderItemVectorIcon(ItemVectorIconKind.Email, size, displaySize);
                 }
 
                 // The chain glyph, not a coloured monogram tile. A letter on a colour block reads
                 // as a site's own branding when it is nothing of the kind — it is just the first
                 // letter of the host — and next to real favicons the invented tiles looked like
                 // logos Clip had got wrong. The plain glyph says "link, no icon" honestly.
-                return RenderItemVectorIcon(ItemVectorIconKind.Link, size);
+                return RenderItemVectorIcon(ItemVectorIconKind.Link, size, displaySize);
             }
 
             // Copied text gets its own mark, distinct from the document glyph used for text files.
@@ -11711,17 +11765,17 @@ public partial class MainWindow : Window
             if (item.Kind == ClipboardItemKind.Files && item.FilePaths.Count == 1)
             {
                 var path = item.FilePaths[0];
-                if (Directory.Exists(path)) return RenderItemVectorIcon(ItemVectorIconKind.Folder, size);
+                if (Directory.Exists(path)) return RenderItemVectorIcon(ItemVectorIconKind.Folder, size, displaySize);
                 if (!preferRichPreview)
                 {
                     return IsImageFile(Path.GetExtension(path).ToLowerInvariant())
-                        ? RenderItemVectorIcon(ItemVectorIconKind.Image, size)
-                        : RenderItemVectorIcon(ItemVectorIconKind.File, size);
+                        ? RenderItemVectorIcon(ItemVectorIconKind.Image, size, displaySize)
+                        : RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize);
                 }
 
                 if (File.Exists(path) && IsImageFile(Path.GetExtension(path).ToLowerInvariant()))
                 {
-                    return RowThumbnailOrGlyph(path, size, onRicher);
+                    return RowThumbnailOrGlyph(path, size, displaySize, onRicher);
                 }
 
                 // A video should show a frame from itself, the way File Explorer does, rather than
@@ -11762,10 +11816,10 @@ public partial class MainWindow : Window
                     }
                 }
 
-                return RenderFileSvg(path, size);
+                return RenderFileSvg(path, size, displaySize);
             }
 
-            return RenderItemVectorIcon(ItemVectorIconKind.File, size);
+            return RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize);
         }
         catch (Exception ex)
         {
@@ -11781,7 +11835,7 @@ public partial class MainWindow : Window
     /// callback: the old synchronous decode — those callers sit off the open path, where a
     /// two-frame flash of glyph would cost more than the wait it hides.
     /// </summary>
-    private ImageSource RowThumbnailOrGlyph(string path, int size, Action<ImageSource>? onRicher)
+    private ImageSource RowThumbnailOrGlyph(string path, int size, double displaySize, Action<ImageSource>? onRicher)
     {
         if (TryGetCachedRaster(RasterCacheKey("bitmap", path, RowIconDecodePixels), out var cached))
         {
@@ -11808,10 +11862,10 @@ public partial class MainWindow : Window
             }
         });
 
-        return RenderItemVectorIcon(ItemVectorIconKind.Image, size);
+        return RenderItemVectorIcon(ItemVectorIconKind.Image, size, displaySize);
     }
 
-    private ImageSource RenderFileSvg(string path, int size)
+    private ImageSource RenderFileSvg(string path, int size, double displaySize)
     {
         var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
         // Keyed by the theme's icon color: the rasterized SVGs bake it in, and a theme-free key
@@ -11849,7 +11903,7 @@ public partial class MainWindow : Window
         var name = IsAudioFile("." + ext)
             ? "file-icon-audio.svg"
             : string.IsNullOrWhiteSpace(ext) ? "file-60.svg" : $"file-icon-{ext}.svg";
-        source = File.Exists(AssetIconPath(name)) ? RenderSvg(name, size) : RenderItemVectorIcon(ItemVectorIconKind.File, size);
+        source = File.Exists(AssetIconPath(name)) ? RenderSvg(name, size) : RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize);
         return RememberRaster(cacheKey, source);
     }
 
@@ -14073,35 +14127,10 @@ internal sealed class SettingsWindow : Window
 
     private static ImageSource CreateDropdownChevronIcon(string hex)
     {
+        // Same chevron the filter dropdowns use, at the same 11px. This used to be a second,
+        // byte-identical copy of those three points with its own pen.
         var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex);
-        var brush = new SolidColorBrush(color);
-        brush.Freeze();
-
-        var pen = new WpfPen(brush, 2.2)
-        {
-            StartLineCap = PenLineCap.Round,
-            EndLineCap = PenLineCap.Round,
-            LineJoin = PenLineJoin.Round,
-        };
-        pen.Freeze();
-
-        var geometry = new StreamGeometry();
-        using (var context = geometry.Open())
-        {
-            context.BeginFigure(new System.Windows.Point(6.5, 9), isFilled: false, isClosed: false);
-            context.LineTo(new System.Windows.Point(12, 14.5), isStroked: true, isSmoothJoin: true);
-            context.LineTo(new System.Windows.Point(17.5, 9), isStroked: true, isSmoothJoin: true);
-        }
-        geometry.Freeze();
-
-        var drawing = new DrawingGroup();
-        drawing.Children.Add(new GeometryDrawing(WpfBrushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, 24, 24))));
-        drawing.Children.Add(new GeometryDrawing(null, pen, geometry));
-        drawing.Freeze();
-
-        var image = new System.Windows.Media.DrawingImage(drawing);
-        image.Freeze();
-        return image;
+        return MainWindow.RenderChevron(color, 11);
     }
 
     private void ApplyPalette(SettingsPalette palette)
@@ -14138,7 +14167,6 @@ internal sealed class SettingsWindow : Window
             panel.Children.Add(DefaultPasteFormatRow());
             panel.Children.Add(ExtractTextFromImagesRow());
             panel.Children.Add(SourceAppInListRow());
-            panel.Children.Add(DragClipsAsFilesRow());
         }
 
         if (string.Equals(page, "Appearance", StringComparison.OrdinalIgnoreCase))
@@ -15055,33 +15083,6 @@ internal sealed class SettingsWindow : Window
 
                     _settings.ShowSourceAppInList = enabled;
                     _applySourceAppInList(enabled);
-                }));
-    }
-
-    /// <summary>
-    /// No apply callback and no delegate through the constructor, unlike its neighbours: the drag
-    /// reads this straight off the shared settings object when a drag starts, so saving it is the
-    /// whole of applying it.
-    /// </summary>
-    private Border DragClipsAsFilesRow()
-    {
-        return ControlRow(
-            "Drag clips out as files",
-            "Dropping a text or link clip on the desktop leaves a .txt or .url file. On by default, and the tradeoff is real: apps that prefer files — VS Code, Slack — then take the file instead of inserting the text.",
-            StyledDropdown(
-                _settings.DragClipsAsFiles ? "On" : "Off",
-                new[] { "Off", "On" },
-                selected =>
-                {
-                    var enabled = string.Equals(selected, "On", StringComparison.OrdinalIgnoreCase);
-                    if (enabled == _settings.DragClipsAsFiles)
-                    {
-                        return;
-                    }
-
-                    _settings.DragClipsAsFiles = enabled;
-                    _settings.Save();
-                    ShellLog.Info($"drag clips as files set enabled={enabled}");
                 }));
     }
 

@@ -1,4 +1,4 @@
-using Clip.Core;
+﻿using Clip.Core;
 using Clip.Shell;
 
 namespace Clip.Tests;
@@ -16,7 +16,6 @@ public sealed class SettingsResetTests
             CheckForUpdatesOnStartup = false,
             InstallUpdatesAutomatically = true,
             TranslucentBackground = false,
-            DragClipsAsFiles = false,
             Hotkeys = new ClipHotkeySettings
             {
                 OpenClip = "Ctrl+Space",
@@ -34,10 +33,6 @@ public sealed class SettingsResetTests
         Assert.True(settings.CheckForUpdatesOnStartup);
         Assert.True(settings.InstallUpdatesAutomatically);
         Assert.True(settings.TranslucentBackground);
-        // On, so a text clip dropped on the desktop leaves a real .txt. The cost is that apps
-        // preferring files take the file instead of the text; the setting is how that is traded back.
-        Assert.True(settings.DragClipsAsFiles);
-        Assert.True(new ClipShellSettings().DragClipsAsFiles);
         Assert.Equal("Alt+V", settings.Hotkeys.OpenClip);
         Assert.Equal("Ctrl+Shift+L", settings.Hotkeys.SaveDebugLog);
         Assert.Empty(settings.Privacy.ExcludedApps);
