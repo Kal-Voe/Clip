@@ -1825,3 +1825,34 @@ merge if it matters.
 5. Re-skin the WinForms tray menu and the 6 stock `MessageBox.Show` dialogs.
 6. Deduplicate `OpenWithWindow` / `ExcludedAppPickerWindow` (~250 near-identical
    lines each, 11 positional brush args).
+
+---
+
+## 2026-09-01 (later) — Steps 2/3/5 landed on main
+
+Six commits `d18c754`..`6108128`. Release clean, 1259/1259 green before each.
+Not published/installed/tagged — the other session owns the release path.
+
+Pin dot drawn instead of typed; DomainMonogram deleted (unreferenced);
+XAML palette reconciled with the runtime one it never matched; dead settings
+cache warm fixed; `Muted2`→`MutedBright` and dead `Muted3` deleted; input-field
+radius unified.
+
+**Walked back two of my own audit findings** — recorded in section 7 of
+ICON-STYLE-AUDIT.md so nobody re-"fixes" them:
+- The "37 loose hexes" were mostly ApplyTheme's SetBrush calls, i.e. the token
+  definitions themselves, not a bypass.
+- Four of the nine corner radii are circles/pills (half the scrollbar track,
+  half the toggle knob, half the toggle track and ring). Collapsing them into a
+  scale would make ovals. Only the input field (7 vs 6) and one popup (10 vs 8)
+  were real.
+
+### Next steps
+
+1. **Step 4, the file-icon fork** — waiting on Isaiah: adopt Lucide itself (MIT,
+   vendored, plus a licence file and an SVG render path) vs draw ~12 category
+   marks in-house on the 24 grid. Do not start until he answers.
+2. `MediaPreviewPage` accents the video player `#8ab4ff` blue while the app
+   accent is `#FF6363` red. Visible change — propose, don't just do.
+3. Re-skin the WinForms tray menu and the 6 stock `MessageBox.Show` dialogs.
+4. Deduplicate `OpenWithWindow` / `ExcludedAppPickerWindow`.
