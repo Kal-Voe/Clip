@@ -10441,7 +10441,7 @@ public partial class MainWindow : Window
         // MainWindow.xaml - that is what sets each icon's real line weight (see IconPen).
         SearchGlyphIcon.Source = RenderChromeIcon(ChromeIconKind.Search, "Muted", 14);
         SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "Text", 16);
-        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "Text", 12);
+        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "MutedBright", 12);
         DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "MutedBright", ChevronDisplaySize);
         FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "MutedBright", ChevronDisplaySize);
         MediaDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, IsMediaFilter(_kindFilter) ? "Text" : "MutedBright", ChevronDisplaySize);

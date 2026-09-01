@@ -266,7 +266,17 @@
             </Setter>
         </Style>
 
-        <!-- No box. These three buttons are a glyph and nothing else, so the hover state is the
+        <!-- The new-snippet plus keeps the outline: it floats over the list with nothing
+             around it, so the box is what says "button" there. Everything else about it matches
+             the filter row it sits above. -->
+        <Style x:Key="BoxedIconButton" TargetType="Button" BasedOn="{StaticResource FilterButton}">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedBright}"/>
+        </Style>
+
+        <!-- No box. Settings and expand are a glyph and nothing else, so the hover state is the
              glyph's own stroke coming up to full rather than a 28x28 outline lighting around a
              15px mark - at that ratio the border reads as the control and the icon as decoration.
 
@@ -460,7 +470,7 @@
                              Outside the ScrollViewer so it stays put while the list scrolls, and
                              small and muted so it does not compete with the rows. -->
                         <Button x:Name="NewSnippetButton"
-                                Style="{StaticResource IconButton}"
+                                Style="{StaticResource BoxedIconButton}"
                                 Click="OnNewSnippetClick"
                                 ToolTip="New Snippet"
                                 Width="20"
