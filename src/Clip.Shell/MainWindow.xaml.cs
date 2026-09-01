@@ -11699,10 +11699,11 @@ public partial class MainWindow : Window
                     return RenderItemVectorIcon(ItemVectorIconKind.Email, size);
                 }
 
-                // The monogram is the placeholder until the site's real icon arrives, and the
-                // fallback when a site has no usable icon.
-                return DomainMonogram.For(payload, size)
-                    ?? RenderItemVectorIcon(ItemVectorIconKind.Link, size);
+                // The chain glyph, not a coloured monogram tile. A letter on a colour block reads
+                // as a site's own branding when it is nothing of the kind — it is just the first
+                // letter of the host — and next to real favicons the invented tiles looked like
+                // logos Clip had got wrong. The plain glyph says "link, no icon" honestly.
+                return RenderItemVectorIcon(ItemVectorIconKind.Link, size);
             }
 
             // Copied text gets its own mark, distinct from the document glyph used for text files.
