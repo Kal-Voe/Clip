@@ -4139,13 +4139,15 @@ public partial class MainWindow : Window
         });
     }
 
+    /// <summary>
+    /// 22 here was never a size choice - it was an optical correction. The two SVG marks
+    /// (plaintext, audio) fill their canvas edge to edge where the hand-drawn 24-grid glyphs carry
+    /// their own padding, so drawing them at 28 made them read noticeably bigger than every row
+    /// beside them. Copied text is drawn now, so it takes the same 28 as the rest and the
+    /// correction comes off with the asset it was correcting for.
+    /// </summary>
     private static double RowIconSize(ClipboardHistoryItem item)
     {
-        if (item.Kind == ClipboardItemKind.Text)
-        {
-            return 22;
-        }
-
         if (item.Kind == ClipboardItemKind.Files &&
             item.FilePaths.Count > 0 &&
             IsAudioFile(Path.GetExtension(item.FilePaths[0]).ToLowerInvariant()))
@@ -11824,8 +11826,13 @@ public partial class MainWindow : Window
                 return RenderItemVectorIcon(ItemVectorIconKind.Link, size, displaySize);
             }
 
-            // Copied text gets its own mark, distinct from the document glyph used for text files.
-            if (item.Kind == ClipboardItemKind.Text) return RenderSvg("file-icon-plaintext.svg", size);
+            // Copied text gets the drawn document - same 24 grid, same derived line weight as
+            // every other glyph in the app. This was file-icon-plaintext.svg, kept deliberately
+            // "distinct from the document glyph used for text files"; that distinction expired
+            // when text files started getting their real Windows icon instead of a drawn one.
+            // ItemVectorIconKind.Text has been sitting unused since, and it is what it was drawn
+            // for: the document outline with three ruled lines, against File's two.
+            if (item.Kind == ClipboardItemKind.Text) return RenderItemVectorIcon(ItemVectorIconKind.Text, size, displaySize);
             if (item.Kind == ClipboardItemKind.Files && item.FilePaths.Count == 1)
             {
                 var path = item.FilePaths[0];
