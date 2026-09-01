@@ -1,37 +1,80 @@
 # Clip — Icon & Styling Uniformity Audit
 _2026-09-01 · scope: `src/Clip.Shell`, `src/Clip.Watcher`, `assets/icons`_
+_Living document. Findings are marked RESOLVED / CORRECTED / open as they land; two of
+the original findings turned out to be wrong and say so where they sit._
 
 ## Verdict
 
-The **colour system is good** (a real token set, one dark theme, honest naming mostly).
-The **icon system is not a system** — it is six unrelated icon families rendered at
-eight different sizes with a fixed pen, so apparent line weight varies **~2x across the
-window and ~9x between the smallest chrome icon and the largest item glyph.**
+**Original:** the colour system is good (a real token set, one dark theme). The icon
+system is not a system — six unrelated icon families rendered at eight different sizes
+with a fixed pen, so apparent line weight varied ~2x across the window and ~9x between
+the smallest chrome icon and the largest item glyph.
+
+**Now (through v1.10.0):** line weight is derived from display size and uniform; the two
+big third-party icon sets are deleted; every file type gets its real Windows icon with a
+drawn, labelled fallback where Windows has none. What is left is listed under Fix order
+— chiefly two surviving SVGs (section 1), the WinForms tray menu and the stock
+MessageBoxes (section 8).
+
+Two findings in here were **wrong** and are corrected in place rather than deleted: the
+"37 loose hexes" miscount (section 7) and the corner-radius scale (section 7). Both
+would have caused damage if acted on literally.
 
 ---
 
-## 1. Six icon families in one window
+## 1. Icon families — RESOLVED, and not the way this audit proposed
 
-| # | Family | Grid | Style | Where it shows |
-|---|--------|------|-------|----------------|
-| A | Hand-drawn WPF vectors (`RenderChromeIcon`, `RenderItemVectorIcon`) | 24 | outline, round caps/joins, stroke 1.8–2.2, some with a 0.16-alpha fill | search, gear, plus, chevrons, expand, text/link/email/folder/image/file glyphs |
-| B | `file-icon-*.svg` (svgrepo "file_xx" set) | 512 | **solid filled** document + dog-ear + bold Arial 3-letter label | 55 reachable file extensions |
-| C | `file-icon-plaintext.svg` | 24 | outline-converted-to-fill, stroke 1.5 | **every copied text clip** — the most common row in the app |
-| D | `file-icon-audio.svg` | 122.88 | solid filled music note | all audio files |
-| E | `file-60.svg` | 1024 | solid filled document | extension-less files |
-| F | Windows shell icons | n/a | **full colour, glossy, 3D** | `.pdf .doc .docx .xls .xlsx .xlsm .ppt .pptx .vsd .vsdx` |
+_Original finding: six unrelated icon families in one window. Two of them (the 54
+per-extension svgrepo documents, and the 1024-grid extension-less fallback) are gone
+as of v1.10.0. What follows is the state now._
 
-A list showing a screenshot, a copied paragraph, a `.json`, and a `.pdf` shows four
-different design languages stacked vertically. Family F is the worst offender — a
-colourful Office icon next to flat monochrome glyphs.
+| Family | Grid | Style | Where it shows |
+|--------|------|-------|----------------|
+| A — hand-drawn WPF vectors | 24 | outline, round caps/joins, one derived line weight | chrome (search, gear, plus, chevrons, expand), item glyphs (text/link/email/folder/image/file), **and the new labelled document fallback** |
+| C — `file-icon-plaintext.svg` | 24 | outline-converted-to-fill, stroke 1.5 | every copied text clip |
+| D — `file-icon-audio.svg` | 122.88 | solid filled music note | all audio files |
+| W — Windows shell icons | n/a | full colour, whatever the app ships | **every registered file type**, not the ten that used to be hard-coded |
 
-**Symptom of the mismatch already in the code:** `RowIconSize()` returns **22** for
-text/audio and **28** for everything else. That is a hand-tuned optical correction
-because family C/D fill their canvas edge-to-edge while family A has built-in padding.
+**The fork this audit posed was the wrong fork.** It offered "vendor Lucide" vs "draw
+~12 category marks". Both were rejected, for a reason neither option accounted for:
+any category scheme needs a hand-maintained extension-to-category list, and there are
+more file types in the world than a list can hold. The bug that started it was
+literally a gap in such a list — `ShouldUseWindowsFileIcon` had `vsd` and `vsdx` but
+not `vsdm`, so a Visio macro file fell through to a generic glyph.
+
+What shipped has no list in it at all, in two layers:
+
+1. Ask Windows for **every** extension, through the existing `SourceAppIcons` resolver,
+   LRU and async cold-miss swap. `ShouldUseWindowsFileIcon` is deleted.
+2. When Windows returns its generic blank page — detected by resolving a deliberately
+   unregistered extension once per size/DPI and byte-comparing — draw an outline
+   document on the 24 grid with the extension printed on it. This goes through
+   `RenderItemVectorIcon` and therefore `IconPen`, so it carries the normalised line
+   weight rather than inventing a second one.
+
+So the monochrome/colour split that this section originally called the worst offender
+still exists, but it is now a **boundary with a meaning** — a real registered icon
+where the system has one, our own mark where it doesn't — rather than an accident of
+which ten extensions someone typed into a list.
+
+**Still open, and smaller:** families C and D are the last two third-party SVGs and
+neither matches family A. `file-icon-plaintext.svg` is stroke 1.5 on a 24 grid where
+everything hand-drawn is now derived-weight; `file-icon-audio.svg` is a solid filled
+note on a 122.88 grid. They cover the two most common non-file clips (copied text,
+audio), so they are seen constantly. Redrawing those two on the 24 grid is a small,
+list-free job and is the remaining icon-uniformity work.
+
+**Load-bearing:** the drawn extension label is capped at 3 characters, measured not
+guessed — at 4 the fit rule drops cap height below three real pixels on a 28px row, so
+"VSDM" rendered visibly smaller than "PDF" next to it. Do not raise that cap without
+re-measuring.
 
 ---
 
-## 2. Line weight is not constant — the biggest visible defect
+## 2. Line weight is not constant — RESOLVED (`19b09f3`, v1.9.0)
+
+_The table below is the state before the fix; `IconPen` now derives thickness from
+display size, and the drawn extension label added in v1.10.0 goes through it too._
 
 Every vector icon is drawn on a 24×24 grid with a **fixed** pen, then scaled by the
 `Image` element. Actual on-screen stroke = `pen × displaySize / 24`:
@@ -56,7 +99,11 @@ Fix: derive pen thickness from display size so every icon lands on one target we
 
 ---
 
-## 3. Duplicated icon code
+## 3. Duplicated icon code — RESOLVED (`19b09f3`, `f8cdef6`)
+
+_Chevron deduped; the two pickers' shared app row extracted to
+`MainWindow.AppRowContent` after it had already drifted. The pickers still share ~200
+lines of chrome — deliberately left, see Fix order._
 
 - `CreateDropdownChevronIcon()` (line ~14074) is a **byte-for-byte reimplementation** of
   `RenderChromeIcon(ChevronDown)` (line ~10494) — same three points, same 2.2 pen,
@@ -68,7 +115,7 @@ Fix: derive pen thickness from display size so every icon lands on one target we
 
 ---
 
-## 4. Non-icons standing in for icons
+## 4. Non-icons standing in for icons — RESOLVED (`19b09f3`, `d18c754`)
 
 - The submenu arrow in the action menu is the **ASCII character `">"`** in a `TextBlock`
   (line ~5102). The app has a proper vector chevron 4000 lines away.
@@ -76,26 +123,30 @@ Fix: derive pen thickness from display size so every icon lands on one target we
 
 ---
 
-## 5. Dead icon assets — 15 of 70 files are unreachable
+## 5. Dead icon assets — RESOLVED
 
-**Never referenced anywhere (6):** `dropdown-arrow-svgrepo-com.svg`,
-`expand-alt-svgrepo-com.svg`, `folder-svgrepo-com.svg`, `hyperlink-icon.svg`,
-`settings-svgrepo-com.svg`, `text_underline_icon_high_fidelity.svg` — all superseded
-by code-drawn vectors.
+Originally 15 of 70 files unreachable. All gone, plus far more than that:
 
-**Shipped but shadowed (9):** `file-icon-{pdf,doc,docx,xls,xlsx,ppt,pptx,vsd,vsdx}.svg`
-are never reached because `ShouldUseWindowsFileIcon()` intercepts those extensions first
-and serves the Windows shell icon instead.
+- 6 never-referenced loose SVGs and 9 Office/PDF icons shadowed by
+  `ShouldUseWindowsFileIcon` — deleted in `19b09f3`.
+- The remaining 54 per-extension documents and the extension-less fallback — deleted
+  in `80e0753`, obsoleted by the two-layer scheme in section 1.
+
+`assets/icons` now holds **two** files: `file-icon-plaintext.svg` and
+`file-icon-audio.svg`. Both are still reachable (`MainWindow.xaml.cs:11828`, `:12019`).
+Section 1 has the case for redrawing them.
 
 ---
 
-## 6. Packaging bug (latent)
+## 6. Packaging bug (latent) — RESOLVED (`19b09f3`)
 
-`assets/icons/*.svg` is copied to output by **`Clip.Watcher.csproj` only**
+_Still worth reading: the same trap applies to the two SVGs that remain._
+
+`assets/icons/*.svg` was copied to output by **`Clip.Watcher.csproj` only**
 (`Clip.Watcher.csproj:8`). `Clip.Shell` is the project that *consumes* them and has no
 such `Content` include. It works today only because both land in the same output folder.
 Build or publish the Shell alone and every file-type icon silently degrades to the
-generic vector document glyph. One-line fix.
+generic vector document glyph. `Clip.Shell.csproj` now has its own include.
 
 ---
 
@@ -164,25 +215,19 @@ and brief — but they are the two places the illusion breaks completely.
    (`19b09f3`, `d18c754`).
 3. ~~**Delete the dead SVGs**; fix the Shell packaging include~~ — done (`19b09f3`).
    `DomainMonogram` deleted too (`f2c8b98`).
-4. **Collapse the file-type icon families** — the big one, still open, see fork below.
+4. ~~**Collapse the file-type icon families**~~ — done, shipped in v1.10.0
+   (`5e16cdb`, `80e0753`), by a different and better route than this audit proposed.
+   See section 1.
 5. ~~Palette, `Muted*` naming, radii~~ — done (`506c780`, `b8acc9b`, `92c5a35`),
    with the corrections recorded in section 7.
 6. Re-skin the tray menu and replace the MessageBoxes — still open.
 7. Deduplicate `OpenWithWindow` / `ExcludedAppPickerWindow` — still open.
 
-### The one real fork (step 4)
+### What replaced the step 4 fork
 
-Family B (55 icons) has to go — a solid, labelled, dog-eared document does not belong
-next to a 1.3 px outline glyph. Two ways:
+The fork is closed. Neither option was taken — see section 1 for what shipped and why
+a category scheme was the wrong shape for the problem.
 
-- **(a) Redraw in-house** — 55 icons on the 24 grid in the existing outline style.
-  Perfect match, zero dependency, but it is 55 icons to draw and maintain.
-- **(b) Adopt Lucide** (MIT, 24 grid, stroke 2, round caps — *already this app's style*)
-  for the ~12 real categories (code, archive, doc, sheet, slide, image, video, audio,
-  disk, exe, config, generic) and drop per-extension icons, OR keep per-extension by
-  overlaying a small extension label under a shared Lucide document mark.
-
-**Recommendation: (b)**, category-based. It matches family A exactly out of the box,
-kills 55 files, and 12 marks is a set a person can actually hold in their head. It also
-lets family F (the colour Windows Office icons) be dropped — `.docx` becomes the doc
-mark like everything else, which is what "one design style" actually requires.
+The residue is small: redraw `file-icon-plaintext.svg` and `file-icon-audio.svg` on the
+24 grid so the last two third-party SVGs match the hand-drawn set. No list required,
+two icons, and they are the two most-seen non-file marks in the app.
