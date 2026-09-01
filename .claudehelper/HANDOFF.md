@@ -1940,3 +1940,32 @@ Pushing a tag does not push the branch. Check `git status -sb` after tagging.
 Tray menu and the 6 `MessageBox` dialogs. Isaiah has raised neither, both are
 brief and modal, and his recent asks have been behaviour rather than chrome.
 Pick them up if he mentions the tray.
+
+## 2026-09-01 (later) — Icon set replaced with Lucide; v1.11.0
+
+Isaiah kept four icons: search, plus, chevron-down, chevron-right (the two
+chevrons are one shape with a flip flag). He picked a Lucide icon for each of
+the other ten and they are now drawn from Lucide's own path data.
+
+**The gear was a sun.** Eight straight spokes around a circle — teeth are the
+whole point of a gear and it had none. Cause: the geometry was derived by hand
+from an *idea* of the icon instead of copied from a drawing of one. `AddPaths`
+now takes the upstream `d` strings verbatim, so updating an icon is a paste.
+
+**The 0.16 soft fill is gone.** Lucide draws pure outlines, and the four icons
+he kept were already pure outlines — the fill was why row glyphs read heavier
+than the chrome above them.
+
+**Video got a kind of its own.** With no Windows thumbnail and no registered
+icon it fell through to the document glyph, so a clip showed a page with "MP4"
+printed on it. `ItemVectorIconKind.Video` → lucide/video.
+
+`AddDocumentOutline` and `PolygonGeometry` lost their last callers and are gone.
+The extension-label box moved to lucide/file's page (x 4..20, y 2..22).
+
+**Harness worth keeping in mind:** `scratchpad/iconsheet` renders every icon
+through the app's own code, magnified 3x, into one PNG. It reaches the private
+render methods by allocating a MainWindow with `GetUninitializedObject` and then
+invoking `Window`'s constructor on the allocated object — the ctor is what makes
+`FindResource` work; without it, setting `Resources` throws. Rebuild it whenever
+an icon changes; you cannot eyeball code-drawn icons any other way.
