@@ -1,7 +1,49 @@
 # Clip — handoff
 
-_Last updated 2026-08-31. **`main` is the trunk.** Committed, **not pushed and not installed** —
-the drag work below is only in the working tree's history until you say otherwise._
+_Last updated 2026-09-01. **`main` is the trunk.** Committed, **not pushed and not installed** —
+everything below is only in `main`'s local history until you say otherwise._
+
+## Menu dismissal, drag jitter, and files-by-default (2026-09-01, commits f73d19a, d8e102d, 6a22231)
+
+Three fixes, one file each in effect (`MainWindow.xaml.cs`), 1265 tests green, zero warnings.
+**Nothing verified on screen** — an installed Clip holds the single-instance mutex, so a Release
+build launched here would only have signalled that instance.
+
+**The right-click menu now always dismisses.** It relied on `Popup StaysOpen="False"`, whose
+dismissal rides on the capture the popup takes when it opens — and this palette defeats that: the
+window is layered, topmost, never activates, ignores `Deactivated`, and `ShowShareSubmenu`
+deliberately sets the parent's `StaysOpen` back to **true** while the submenu is up, clearing it
+again only if the pointer crosses a different row on the way out. So it leaked. The low-level mouse
+hook already sees every button-down on the desktop, so `HideIfMousePressedOutsidePalette` closes the
+menu itself now: click on the menu → left alone, the row still invokes; click anywhere else → both
+popups close and the palette stays (a menu swallows its own dismissing click). "Outside" is measured
+against the border, not the popup window — the border reserves 34px bottom-right for its shadow,
+that band is transparent and clicks fall through it, so counting it as inside would have left a dead
+strip beside every menu. `PointIsOnPopupChild` is the pure part and is tested.
+
+**Cross-monitor drag no longer jitters.** `DpiChanged` re-centres via `PositionOnMouseScreen`, which
+is right when Windows rescales an open palette and wrong mid-drag — it yanked the window out from
+under the pointer at every boundary while the OS move loop kept dragging by its original offset.
+`WM_ENTERSIZEMOVE`/`WM_EXITSIZEMOVE` (WndProc hook) now bracket the move loop and suppress the
+re-centring; the size is still re-asserted inside the DPI change by `RestoreDesignSizeWhereItStands`,
+because WPF mishandles `WM_DPICHANGED` on a layered window and adopts the physical size as DIPs —
+that is the inflation `PositionOnMouseScreen` documents. It re-asserts in place and puts the corner
+back afterwards (laying out the new DIP size uses a Left/Top the rescale just made stale), and runs
+once more on `WM_EXITSIZEMOVE` for a crossing that never raised `DpiChanged` at all.
+
+**`DragClipsAsFiles` defaults to on**, with the tradeoff stated on the switch itself ("apps that
+prefer files — VS Code, Slack — then take the file instead of inserting the text"). Note: **no
+existing test asserted the old default** — the "two tests" in the brief do not exist in the tree, so
+the assertion was added to `SettingsResetTests` instead (reset value and fresh instance). The CIDA
+route stays retired; nothing was touched in `BuildDragData` beyond the comment.
+
+**Worth eyeballing:** open a menu and click a menu row, the palette behind it, and the desktop;
+open the Share submenu and click away from it; drag the palette across the 100%/150% boundary in
+both directions and check it lands at 800x520 without a flicker; drop a text clip on the desktop.
+
+**One test flake seen once** (1264/1265, name not captured) and not reproduced in seven subsequent
+runs. It ran while the installed Clip was live, and `ClipStoragePathsCoverageTests` reads the real
+`settings.json` when one exists — most likely that, not this work.
 
 ## The .txt-on-desktop compromise is gone (2026-08-31, commit eb8cda3)
 
