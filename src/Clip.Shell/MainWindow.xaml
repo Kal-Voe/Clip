@@ -339,7 +339,7 @@
                         Background="{DynamicResource Surface}"
                         BorderBrush="{DynamicResource Line2}"
                         BorderThickness="1"
-                        CornerRadius="6"
+                        CornerRadius="7"
                         Padding="10,0"
                         VerticalAlignment="Center">
                     <Grid>

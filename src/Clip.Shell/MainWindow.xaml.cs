@@ -14384,7 +14384,7 @@ internal sealed class SettingsWindow : Window
             Background = PaletteBackdrop.Opaque(_surface),
             BorderBrush = _line,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(8),
             Child = stack,
         };
 
