@@ -1863,3 +1863,29 @@ ICON-STYLE-AUDIT.md so nobody re-"fixes" them:
    `OnKeyDown` — ~200 lines apiece. A shared `AppPickerWindow` base would fix it
    but that's a new abstraction in a file two sessions keep editing; wants
    Isaiah's appetite for churn, not just a judgement call.
+
+---
+
+## 2026-09-01 (later still) — Test flake candidate closed
+
+`1485b92`. The other session saw 1258/1259 once and lost the test name. Not
+reproduced in 11 runs here, so this is a candidate, not a confirmed cause.
+
+`LongTextPreviewTests.Dispose` rolled its own `Directory.Delete`: no retry, and
+caught `IOException` but not `UnauthorizedAccessException`. Windows throws the
+first when a file is busy and the second when a handle is still open — only one
+was caught. An exception out of `Dispose` fails the class, i.e. exactly one
+failure in a green run. Its two siblings on the same store
+(`ClipboardHistoryStoreCoverageTests`, `ClipboardHistoryStoreDeepCoverageTests`)
+already used `TestTemp.Delete` and caught both, and one names the cause:
+background sidecar writes race the cleanup. Now matches them.
+
+`ClipboardDragFileTests` moved to `TestTemp.Delete` too — its bare catch made it
+safe but it gave up on the first throw and leaked temp folders.
+
+Those were the last raw `Directory.Delete` teardowns; the other 48 files were
+already on the helper. The remaining raw call in
+`ClipboardHistoryStoreCoverageTests` (~line 744) is deliberate, mid-test.
+
+**If the suite goes red again, capture the test name before re-running.** That is
+still the only thing that will settle it.
