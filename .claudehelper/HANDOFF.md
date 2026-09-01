@@ -1922,3 +1922,21 @@ remove it and the build caught me. Now commented as the only caller.
 - ~200 lines still duplicated between the two picker windows (chrome, search,
   footer, key handling). Deliberately left — a base class is churn against a bug
   that has not happened; if a third picker appears the case makes itself.
+
+## 2026-09-01 (close) — Published as v1.10.1; screen check passed
+
+Release run green, all four assets on the tag. Installed over
+`%APPDATA%\Programs\Clip` and restarted before checking.
+
+**Screen check the batch needed: passed.** Copied-text and audio rows at 28 sit
+level with the file rows beside them, and nothing reads heavy against the real
+Windows icons — `IconStrokePx` stays where it is.
+
+Also: `main` had been left 5 commits behind while the tag was already pushed.
+Pushing a tag does not push the branch. Check `git status -sb` after tagging.
+
+### Deferred on purpose, not missed
+
+Tray menu and the 6 `MessageBox` dialogs. Isaiah has raised neither, both are
+brief and modal, and his recent asks have been behaviour rather than chrome.
+Pick them up if he mentions the tray.
