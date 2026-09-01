@@ -105,16 +105,33 @@ generic vector document glyph. One-line fix.
 One dark theme, no light-mode leftovers.
 
 **Problems:**
-- **37 hard-coded hex literals** in `src/Clip.Shell/*.cs` that bypass the tokens,
-  including `#FF6363` (= `Accent`, written out 4×), `#D56B5D` (= `Danger`),
-  `#717176` (scrollbar thumb, defined **3×**: `App.xaml` ×2, `MainWindow.xaml` ×1),
-  and `#989898` (a chevron grey that is not a token at all).
-- **`Muted` naming is not a scale.** `Muted` `#8F898F`, `Muted2` `#C7C1C7`,
-  `Muted3` `#6B656B` — `Muted2` is the *brightest* of the three. The numbers imply
-  escalating de-emphasis; the values do the opposite.
-- **Corner radius has 9 distinct values** — 3, 4, 5, 6, 7, 8, 10, 11, 14 — with no
-  scale behind them. 5/6/7 and 10/11 are indistinguishable pairs.
-- Font sizes are fine: 11/12/13/15/16/18, one stray `8`.
+- **The XAML palette describes an app that does not exist.** `MainWindow.xaml`
+  declares eighteen theme brushes; `ApplyTheme` runs from the constructor and
+  `SetBrush` overwrites every one before the window paints. They were not even the
+  same hue family — the XAML said warm greys with a magenta cast (`Bg #1F1E1F`,
+  `Muted #8F898F`) against the neutral greys that ship (`#1A1A1A`, `#A3A3A3`).
+  **Fixed** — values reconciled, ownership documented.
+- **`SettingsWindow.WarmCaches` warmed nothing.** It pre-warmed the dropdown-icon
+  cache with `#646464` and `#989898`; the cache is keyed by the installed `Muted`,
+  which is `#A3A3A3`. Two entries nothing read, and the first real chevron still
+  rendered cold. **Fixed** — derived from `MainWindow.MutedHex`.
+- **`Muted` naming was inverted.** `Muted2` `#BBBBBB` was the *brightest* of the
+  three. `Muted3` `#777777` was declared twice and read nowhere. **Fixed** —
+  `Muted2` → `MutedBright`, `Muted3` deleted.
+- The remaining hex literals are **not** stray tokens and should stay: syntax
+  colours in `CodePreviewPage`, the `JankHarness` test values, the app tile cream.
+  One is worth a look on its own merits — `MediaPreviewPage` accents the video
+  player `#8ab4ff` blue while the app's accent is `#FF6363` red.
+- Font sizes are fine: 11/12/13/15/16/18. The stray `8` was the pinned-row bullet
+  and is gone.
+
+**Corrected — the radius finding was half wrong.** The audit originally called nine
+distinct radii arbitrary. Four of them are geometry, not style: `3` is half the 6px
+scrollbar track, `7` is half the 14px toggle knob, and `11` is half both the 22px
+ring and the 22px toggle track. Those are circles and pills and snapping them to a
+scale would produce ovals. The one genuine inconsistency was the bordered input
+field — radius 7 in five places, 6 in the sixth — plus a lone 10 on the settings
+popup where every other panel is 8. **Both fixed**; the rest stays.
 
 ---
 
@@ -142,12 +159,16 @@ and brief — but they are the two places the illusion breaks completely.
 
 ## Fix order
 
-1. **Normalise line weight** — derive pen thickness from display size. One constant.
-2. **Dedupe the chevron**; replace the `">"` character with the real chevron.
-3. **Delete the 15 dead SVGs**; fix the Shell packaging include.
-4. **Collapse the file-type icon families** — the big one, see fork below.
-5. Tokenise the 37 loose hexes; rename `Muted*` to a real scale; cut radii to 4 values.
-6. Re-skin the tray menu and replace the MessageBoxes.
+1. ~~**Normalise line weight**~~ — done, shipped in v1.9.0 (`19b09f3`).
+2. ~~**Dedupe the chevron**; replace the `">"` and `"●"` characters~~ — done
+   (`19b09f3`, `d18c754`).
+3. ~~**Delete the dead SVGs**; fix the Shell packaging include~~ — done (`19b09f3`).
+   `DomainMonogram` deleted too (`f2c8b98`).
+4. **Collapse the file-type icon families** — the big one, still open, see fork below.
+5. ~~Palette, `Muted*` naming, radii~~ — done (`506c780`, `b8acc9b`, `92c5a35`),
+   with the corrections recorded in section 7.
+6. Re-skin the tray menu and replace the MessageBoxes — still open.
+7. Deduplicate `OpenWithWindow` / `ExcludedAppPickerWindow` — still open.
 
 ### The one real fork (step 4)
 
