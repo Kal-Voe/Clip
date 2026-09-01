@@ -4,6 +4,8 @@
     <PackageReference Include="ExcelDataReader" Version="3.7.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3065.39" />
+    <!-- Still needed by FaviconCache: a site can serve its favicon as an SVG and there is no
+         BitmapDecoder for that. Clip's own icons are all drawn now, so this is the only caller. -->
     <PackageReference Include="Svg" Version="3.4.7" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
@@ -44,11 +46,6 @@
 
   <ItemGroup>
     <Content Include="..\..\assets\app-icons\*.*" Link="assets\app-icons\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <!-- The Shell is what reads these (AssetIconPath / RenderFileSvg). Only Clip.Watcher copied
-         them, so it worked purely because both projects land in the same output folder - build
-         or publish the Shell alone and every file-type icon silently fell back to the generic
-         vector document glyph. -->
-    <Content Include="..\..\assets\icons\*.svg" Link="assets\icons\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

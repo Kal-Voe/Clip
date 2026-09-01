@@ -20,7 +20,6 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using Clip.Core;
 using Microsoft.Web.WebView2.Core;
-using Svg;
 using DrawingImage = System.Drawing.Image;
 using Forms = System.Windows.Forms;
 using WpfBrush = System.Windows.Media.Brush;
@@ -948,9 +947,8 @@ public partial class MainWindow : Window
     private static readonly TimeSpan WindowsHistoryImportAfterShowDelay = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ClipboardDuplicateBurstWindow = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan PaletteSessionKeepAlive = TimeSpan.FromSeconds(60);
-    private static readonly Dictionary<string, ImageSource> SvgImageCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, string> SvgTextCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly object SvgCacheGate = new();
+    private static readonly Dictionary<string, ImageSource> VectorImageCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object VectorCacheGate = new();
     private static readonly RecentImageCache RasterImageCache = new(MaxCachedRasterImages);
     private static readonly object RasterImageCacheGate = new();
 
@@ -4140,23 +4138,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 22 here was never a size choice - it was an optical correction. The two SVG marks
-    /// (plaintext, audio) fill their canvas edge to edge where the hand-drawn 24-grid glyphs carry
-    /// their own padding, so drawing them at 28 made them read noticeably bigger than every row
-    /// beside them. Copied text is drawn now, so it takes the same 28 as the rest and the
-    /// correction comes off with the asset it was correcting for.
+    /// 22 was never a size choice - it was an optical correction for two SVGs that filled their
+    /// canvas edge to edge where the hand-drawn 24-grid glyphs carry their own padding. Both are
+    /// drawn now, so the correction comes off with the assets it corrected for.
+    ///
+    /// The audio case had also outlived its own rule: it keyed off "is this an audio file", not
+    /// off which icon actually won, so once Windows started answering for mp3/m4a/wav an mp3 with
+    /// a real registered icon still shrank to 22 while a .py with a real registered icon sat at
+    /// 28. Same class of thing, two sizes, for no reason a reader could see.
     /// </summary>
-    private static double RowIconSize(ClipboardHistoryItem item)
-    {
-        if (item.Kind == ClipboardItemKind.Files &&
-            item.FilePaths.Count > 0 &&
-            IsAudioFile(Path.GetExtension(item.FilePaths[0]).ToLowerInvariant()))
-        {
-            return 22;
-        }
-
-        return 28;
-    }
+    private const double RowIconSize = 28;
 
     private Border BuildRow(ClipboardHistoryItem item)
     {
@@ -4184,8 +4175,8 @@ public partial class MainWindow : Window
         {
             // The text and audio marks are denser shapes than the outlined document glyph, so
             // they read heavier at the same box and sit smaller.
-            Width = RowIconSize(item),
-            Height = RowIconSize(item),
+            Width = RowIconSize,
+            Height = RowIconSize,
             Stretch = Stretch.Uniform,
             VerticalAlignment = VerticalAlignment.Center,
             SnapsToDevicePixels = true,
@@ -4195,7 +4186,7 @@ public partial class MainWindow : Window
         // thumbnail arrives late through the callback: each icon element belongs to exactly one
         // item and rows are rebuilt per render, so a swap landing on a discarded element is
         // harmless — no tag guard needed the way the shared header icon needs one.
-        icon.Source = IconFor(item, RowIconLogicalSize, preferRichPreview: true, onRicher: richer => icon.Source = richer, displaySize: RowIconSize(item));
+        icon.Source = IconFor(item, RowIconLogicalSize, preferRichPreview: true, onRicher: richer => icon.Source = richer, displaySize: RowIconSize);
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         AttachFavicon(icon, item);
         grid.Children.Add(icon);
@@ -10493,6 +10484,7 @@ public partial class MainWindow : Window
         Email,
         Folder,
         Image,
+        Audio,
         File,
     }
 
@@ -10622,9 +10614,9 @@ public partial class MainWindow : Window
     internal static ImageSource RenderAppTileIcon()
     {
         const string cacheKey = "app-tile";
-        lock (SvgCacheGate)
+        lock (VectorCacheGate)
         {
-            if (SvgImageCache.TryGetValue(cacheKey, out var cached))
+            if (VectorImageCache.TryGetValue(cacheKey, out var cached))
             {
                 return cached;
             }
@@ -10651,9 +10643,9 @@ public partial class MainWindow : Window
         var image = new System.Windows.Media.DrawingImage(drawing);
         image.Freeze();
 
-        lock (SvgCacheGate)
+        lock (VectorCacheGate)
         {
-            SvgImageCache[cacheKey] = image;
+            VectorImageCache[cacheKey] = image;
         }
 
         return image;
@@ -10680,9 +10672,9 @@ public partial class MainWindow : Window
     {
         var color = BrushHex("MutedBright");
         var cacheKey = $"item-vector|{kind}|{size}|{displaySize:0.##}|{color}|{label}";
-        lock (SvgCacheGate)
+        lock (VectorCacheGate)
         {
-            if (SvgImageCache.TryGetValue(cacheKey, out var cached))
+            if (VectorImageCache.TryGetValue(cacheKey, out var cached))
             {
                 return cached;
             }
@@ -10741,6 +10733,18 @@ public partial class MainWindow : Window
                     new System.Windows.Point(17.4, 16.8))));
                 break;
 
+            case ItemVectorIconKind.Audio:
+                // Two beamed notes: stem-and-beam as one open polyline, a filled head on each
+                // stem foot. Same outline-plus-soft-fill treatment as Folder and Image.
+                drawing.Children.Add(new GeometryDrawing(null, pen, PolylineGeometry(
+                    new System.Windows.Point(9.5, 17.4),
+                    new System.Windows.Point(9.5, 6.2),
+                    new System.Windows.Point(19.4, 4.3),
+                    new System.Windows.Point(19.4, 15.1))));
+                drawing.Children.Add(new GeometryDrawing(fill, pen, new EllipseGeometry(new System.Windows.Point(7.1, 17.4), 2.4, 2.4)));
+                drawing.Children.Add(new GeometryDrawing(fill, pen, new EllipseGeometry(new System.Windows.Point(17.0, 15.1), 2.4, 2.4)));
+                break;
+
             case ItemVectorIconKind.File:
                 AddDocumentOutline(drawing, pen, fill);
                 if (string.IsNullOrEmpty(label))
@@ -10761,9 +10765,9 @@ public partial class MainWindow : Window
         var image = new System.Windows.Media.DrawingImage(drawing);
         image.Freeze();
 
-        lock (SvgCacheGate)
+        lock (VectorCacheGate)
         {
-            SvgImageCache[cacheKey] = image;
+            VectorImageCache[cacheKey] = image;
         }
 
         return image;
@@ -11941,7 +11945,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>The one mark every audio container shares, whatever the codec.</summary>
-    private const string AudioIconAsset = "file-icon-audio.svg";
 
     /// <summary>How much of an extension fits on the document and still reads at a 28px row.</summary>
     private const int MaxLabelTextElements = 3;
@@ -12021,9 +12024,9 @@ public partial class MainWindow : Window
     /// </summary>
     private ImageSource FileFallbackGlyph(string ext, int size, double displaySize)
     {
-        if (IsAudioFile("." + ext) && File.Exists(AssetIconPath(AudioIconAsset)))
+        if (IsAudioFile("." + ext))
         {
-            return RenderSvg(AudioIconAsset, size);
+            return RenderItemVectorIcon(ItemVectorIconKind.Audio, size, displaySize);
         }
 
         return RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize, FileExtensionLabel(ext));
@@ -12150,39 +12153,6 @@ public partial class MainWindow : Window
         return pixels;
     }
 
-    private ImageSource RenderSvg(string fileName, int size, double scaleX = 1.0, string? color = null)
-    {
-        var actualColor = color ?? BrushHex("MutedBright");
-        var cacheKey = $"{fileName}|{size}|{scaleX:0.###}|{actualColor}";
-        lock (SvgCacheGate)
-        {
-            if (SvgImageCache.TryGetValue(cacheKey, out var cached))
-            {
-                return cached;
-            }
-        }
-
-        var renderWidth = Math.Max(1, (int)Math.Round(size * scaleX));
-        using var bitmap = new System.Drawing.Bitmap(Math.Max(size, renderWidth), size);
-        using var graphics = System.Drawing.Graphics.FromImage(bitmap);
-        graphics.Clear(System.Drawing.Color.Transparent);
-        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-        var svg = ThemeSvg(ReadSvgText(fileName), actualColor);
-        var document = SvgDocument.FromSvg<SvgDocument>(svg);
-        document.Width = renderWidth;
-        document.Height = size;
-        using var rendered = document.Draw(renderWidth, size);
-        graphics.DrawImage(rendered, (bitmap.Width - renderWidth) / 2, 0, renderWidth, size);
-        var source = BitmapFromDrawingImage(bitmap);
-        lock (SvgCacheGate)
-        {
-            SvgImageCache[cacheKey] = source;
-        }
-
-        return source;
-    }
-
     private static WpfBrush BrushFromHex(string hex)
     {
         try
@@ -12216,33 +12186,6 @@ public partial class MainWindow : Window
         graphics.FillEllipse(fill, inset, inset, swatchSize - inset * 2, swatchSize - inset * 2);
         graphics.DrawEllipse(border, inset, inset, swatchSize - inset * 2, swatchSize - inset * 2);
         return RememberRaster(cacheKey, BitmapFromDrawingImage(bitmap));
-    }
-
-    private static string ThemeSvg(string svg, string color)
-    {
-        return Regex.Replace(svg, @"#[0-9a-fA-F]{3,8}|rgb\([^)]+\)|black|#000", color, RegexOptions.IgnoreCase);
-    }
-
-    private static string ReadSvgText(string fileName)
-    {
-        lock (SvgCacheGate)
-        {
-            if (SvgTextCache.TryGetValue(fileName, out var cached))
-            {
-                return cached;
-            }
-
-            var svg = File.ReadAllText(AssetIconPath(fileName));
-            SvgTextCache[fileName] = svg;
-            return svg;
-        }
-    }
-
-    private static string AssetIconPath(string fileName)
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, "assets", "icons", fileName);
-        if (File.Exists(path)) return path;
-        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "assets", "icons", fileName));
     }
 
     internal static string AppIconPath()

@@ -5,7 +5,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\assets\icons\*.svg" Link="assets\icons\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\assets\app-icons\*.ico" Link="assets\app-icons\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
