@@ -2226,7 +2226,35 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (KeepOpenForDebug || OpenTestOffscreen || _suppressDeactivate || ActionMenuPopup.IsOpen || IsContextMenuOpen(this))
+        if (KeepOpenForDebug || OpenTestOffscreen)
+        {
+            return;
+        }
+
+        // The action menu closes from here, not from StaysOpen="False". A Popup's own dismissal
+        // rides on the mouse capture it takes when it opens, and this palette breaks that in
+        // several ways at once: the window is layered, topmost and never activates, the submenu
+        // path deliberately turns StaysOpen back ON for the parent while the child is up, and the
+        // click that should dismiss the menu is often the same click the low-level hook below is
+        // already watching for. Net result was a menu that closed on some outside clicks and not
+        // others. The hook sees every button-down on the desktop, so decide it here instead.
+        if (ActionMenuPopup.IsOpen)
+        {
+            if (!IsPointInPopup(ActionMenuPopup, screenX, screenY) && !IsPointInPopup(ShareSubmenuPopup, screenX, screenY))
+            {
+                // CloseActionMenus takes the submenu with it, and OnActionMenuClosed clears
+                // _suppressDeactivate, so the next click is judged against the palette as usual.
+                CloseActionMenus();
+                ShellLog.Info($"menu closed on outside click at {screenX},{screenY}");
+            }
+
+            // Either way this click belonged to the menu — it invoked a row or it dismissed the
+            // menu — so the palette stays up, the way a Windows menu swallows its dismissing
+            // click. A click outside the palette still hides it, on the next one.
+            return;
+        }
+
+        if (_suppressDeactivate || IsContextMenuOpen(this))
         {
             return;
         }
@@ -2247,6 +2275,61 @@ public partial class MainWindow : Window
             ConcealPalette("outside-click");
             ShellLog.Info($"palette hidden on outside click at {screenX},{screenY} rect={rect.Left},{rect.Top},{rect.Right},{rect.Bottom}");
         }
+    }
+
+    /// <summary>
+    /// Whether a raw screen-pixel point is on the visible part of an open popup.
+    ///
+    /// A Popup is its own top-level window, so it has a Win32 rect of its own to compare against —
+    /// same coordinate space, same reason, as the palette's test above. What the rect alone gets
+    /// wrong is the menu borders' 34px bottom-right margin, which reserves room for the drop
+    /// shadow: that band is part of the popup window but is transparent, clicks fall straight
+    /// through it onto the palette, and counting it as "inside" would leave a strip beside every
+    /// menu where clicking did nothing at all — the bug this method exists to end.
+    /// </summary>
+    private static bool IsPointInPopup(System.Windows.Controls.Primitives.Popup popup, int screenX, int screenY)
+    {
+        if (!popup.IsOpen || popup.Child is not FrameworkElement child)
+        {
+            return false;
+        }
+
+        if (PresentationSource.FromVisual(child) is not HwndSource source ||
+            source.Handle == IntPtr.Zero ||
+            !GetWindowRect(source.Handle, out var rect))
+        {
+            return false;
+        }
+
+        return PointIsOnPopupChild(
+            rect.Left,
+            rect.Top,
+            child.ActualWidth,
+            child.ActualHeight,
+            source.CompositionTarget?.TransformToDevice.M11 ?? 1.0,
+            source.CompositionTarget?.TransformToDevice.M22 ?? 1.0,
+            screenX,
+            screenY);
+    }
+
+    /// <summary>
+    /// The child sits at the popup window's top-left corner (the shadow margin grows the window
+    /// bottom-right), so its physical bounds are the window origin plus the child's DIP size times
+    /// that window's scale.
+    /// </summary>
+    internal static bool PointIsOnPopupChild(
+        int windowLeft,
+        int windowTop,
+        double childWidth,
+        double childHeight,
+        double scaleX,
+        double scaleY,
+        int screenX,
+        int screenY)
+    {
+        var right = windowLeft + childWidth * scaleX;
+        var bottom = windowTop + childHeight * scaleY;
+        return screenX >= windowLeft && screenX < right && screenY >= windowTop && screenY < bottom;
     }
 
     private const int WhMouseLowLevel = 14;
