@@ -1889,3 +1889,36 @@ already on the helper. The remaining raw call in
 
 **If the suite goes red again, capture the test name before re-running.** That is
 still the only thing that will settle it.
+
+---
+
+## 2026-09-01 (end) — Last two icon assets drawn; assets/icons is empty
+
+`4ab1ed2` audit refresh, `919dcf2` copied text, `8a0d0e2` audio + SVG pipeline.
+1281 green. Not published.
+
+Clip now draws every icon it owns. `assets/icons` is gone; `RenderSvg`,
+`ThemeSvg`, `ReadSvgText`, `AssetIconPath` deleted with it; caches renamed
+`VectorImageCache`/`VectorCacheGate`.
+
+**`RowIconSize` is now a constant 28.** The 22 was an optical correction for the
+two SVGs filling their canvas. The audio branch was also a latent bug of the same
+shape as the `vsdm` one: it keyed off *is this an audio file* rather than *which
+icon won*, so an mp3 with a real Windows icon shrank to 22 while a .py with a
+real Windows icon sat at 28.
+
+**Needs a screen check** (only visible changes in the batch): copied-text rows
+and audio rows both go 22 → 28. If icons read heavy next to real Windows icons,
+the single knob is `IconStrokePx` — do not chase it per-icon.
+
+**Gotcha:** the `Svg` NuGet package is NOT dead. `FaviconCache` needs it — a site
+can serve its favicon as SVG and there is no `BitmapDecoder` for that. I tried to
+remove it and the build caught me. Now commented as the only caller.
+
+### Still open
+
+- WinForms tray menu is stock light-grey Windows chrome on a dark app.
+- 6 stock `MessageBox.Show` dialogs (1 Watcher, 5 Shell).
+- ~200 lines still duplicated between the two picker windows (chrome, search,
+  footer, key handling). Deliberately left — a base class is churn against a bug
+  that has not happened; if a third picker appears the case makes itself.
