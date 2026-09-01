@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -10673,10 +10674,10 @@ public partial class MainWindow : Window
         return geometry;
     }
 
-    private ImageSource RenderItemVectorIcon(ItemVectorIconKind kind, int size, double displaySize)
+    private ImageSource RenderItemVectorIcon(ItemVectorIconKind kind, int size, double displaySize, string? label = null)
     {
         var color = BrushHex("MutedBright");
-        var cacheKey = $"item-vector|{kind}|{size}|{displaySize:0.##}|{color}";
+        var cacheKey = $"item-vector|{kind}|{size}|{displaySize:0.##}|{color}|{label}";
         lock (SvgCacheGate)
         {
             if (SvgImageCache.TryGetValue(cacheKey, out var cached))
@@ -10740,8 +10741,17 @@ public partial class MainWindow : Window
 
             case ItemVectorIconKind.File:
                 AddDocumentOutline(drawing, pen, fill);
-                AddLine(drawing, pen, 8.5, 14, 16, 14);
-                AddLine(drawing, pen, 8.5, 17, 14, 17);
+                if (string.IsNullOrEmpty(label))
+                {
+                    // No extension to print: two ruled lines, the way this glyph always looked.
+                    AddLine(drawing, pen, 8.5, 14, 16, 14);
+                    AddLine(drawing, pen, 8.5, 17, 14, 17);
+                }
+                else
+                {
+                    AddExtensionLabel(drawing, stroke, label);
+                }
+
                 break;
         }
 
@@ -10767,6 +10777,62 @@ public partial class MainWindow : Window
             new System.Windows.Point(6.5, 20.2))));
         AddLine(drawing, pen, 14.7, 3.8, 14.7, 8);
         AddLine(drawing, pen, 14.7, 8, 18.5, 8);
+    }
+
+    // The box the extension is printed into, inside the document outline (x 6.5..18.5,
+    // y 3.8..20.2) and clear of the dog-ear, which ends at y 8.
+    private const double LabelBoxWidth = 9.6;
+    private const double LabelBoxHeight = 4.2;
+    private const double LabelCenterX = 12.5;
+    private const double LabelCenterY = 15.0;
+
+    /// <summary>
+    /// The extension, printed on the document. This is what makes the glyph cover every extension
+    /// that exists or ever will: there is no per-type asset and no list to keep, and a type Windows
+    /// has never heard of still tells the user what it is.
+    ///
+    /// The label is scaled to fit the box rather than given a font size per length, so "7Z" and
+    /// "XLS" come out at close to the same optical weight instead of one of them overflowing the
+    /// page. That fit is also why the label is capped at three characters: measured on this box, a
+    /// fourth character drops the cap height from 4.2 grid units to 2.3, which at a 28px row is
+    /// under three real pixels of type - present, but not readable.
+    /// </summary>
+    private static void AddExtensionLabel(DrawingGroup drawing, WpfBrush brush, string label)
+    {
+        // Same family the rest of the app is set in (see the FontFamily setters in
+        // MainWindow.xaml). Bold, because at a 28px row the cap height here is about 5 real
+        // pixels and anything lighter reads as a smudge next to the 1.3px icon stroke.
+        var typeface = new Typeface(
+            new System.Windows.Media.FontFamily("Segoe UI Variable Text, Segoe UI"),
+            FontStyles.Normal,
+            FontWeights.Bold,
+            FontStretches.Normal);
+
+        var text = new FormattedText(
+            label,
+            CultureInfo.InvariantCulture,
+            System.Windows.FlowDirection.LeftToRight,
+            typeface,
+            10,
+            brush,
+            96);
+
+        var geometry = text.BuildGeometry(new System.Windows.Point(0, 0));
+        var bounds = geometry.Bounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            return;
+        }
+
+        var scale = Math.Min(LabelBoxWidth / bounds.Width, LabelBoxHeight / bounds.Height);
+        var transform = new TransformGroup();
+        transform.Children.Add(new TranslateTransform(-(bounds.X + (bounds.Width / 2)), -(bounds.Y + (bounds.Height / 2))));
+        transform.Children.Add(new ScaleTransform(scale, scale));
+        transform.Children.Add(new TranslateTransform(LabelCenterX, LabelCenterY));
+        transform.Freeze();
+        geometry.Transform = transform;
+
+        drawing.Children.Add(new GeometryDrawing(brush, null, geometry));
     }
 
     private static void AddLine(DrawingGroup drawing, WpfPen pen, double x1, double y1, double x2, double y2)
@@ -11778,6 +11844,7 @@ public partial class MainWindow : Window
 
                 // A video should show a frame from itself, the way File Explorer does, rather than
                 // a generic film glyph. Falls back to the type icon when Windows has no thumbnail.
+                var framePending = false;
                 if (IsVideoFile(Path.GetExtension(path).ToLowerInvariant()))
                 {
                     var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
@@ -11796,6 +11863,7 @@ public partial class MainWindow : Window
                         // Cold extraction can spend hundreds of milliseconds pulling a frame out
                         // of a video — far too long for a row being built during the open. The
                         // STA worker extracts it and the caller swaps it in over the type icon.
+                        framePending = true;
                         SourceAppIcons.ThumbnailAsync(path, size, dpiScale, resolved =>
                         {
                             if (resolved is not null)
@@ -11814,7 +11882,9 @@ public partial class MainWindow : Window
                     }
                 }
 
-                return RenderFileSvg(path, size, displaySize);
+                // onRicher belongs to whichever richer image was actually requested: a video
+                // already waiting on a real frame must not have its type icon land on top of it.
+                return RenderFileTypeIcon(path, size, displaySize, framePending ? null : onRicher);
             }
 
             return RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize);
@@ -11863,51 +11933,214 @@ public partial class MainWindow : Window
         return RenderItemVectorIcon(ItemVectorIconKind.Image, size, displaySize);
     }
 
-    private ImageSource RenderFileSvg(string path, int size, double displaySize)
+    /// <summary>The one mark every audio container shares, whatever the codec.</summary>
+    private const string AudioIconAsset = "file-icon-audio.svg";
+
+    /// <summary>How much of an extension fits on the document and still reads at a 28px row.</summary>
+    private const int MaxLabelTextElements = 3;
+
+    private static readonly object UnknownDocumentGate = new();
+    private static readonly Dictionary<string, byte[]?> UnknownDocumentPixelCache = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The type icon for a file.
+    ///
+    /// Windows is asked about every extension rather than a hand-kept list of ten. A .vsdm used to
+    /// come up as a blank page purely because that list had vsd and vsdx and not vsdm, while the
+    /// shell had a perfectly good Visio icon for it the whole time. Whatever Windows cannot answer
+    /// is drawn instead, with the extension printed on the page - which is why there are no
+    /// per-extension assets left to maintain.
+    /// </summary>
+    private ImageSource RenderFileTypeIcon(string path, int size, double displaySize, Action<ImageSource>? onRicher = null)
     {
         var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
-        // Keyed by the theme's icon color: the rasterized SVGs bake it in, and a theme-free key
-        // kept serving the old theme's rendering after a switch.
-        var cacheKey = $"file-icon|{ext}|{size}|{BrushHex("MutedBright")}";
+        var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        // Keyed by the theme's icon color, because the drawn glyph bakes it in and a theme-free key
+        // kept serving the old theme's rendering after a switch. DPI and display size are in the key
+        // too: DPI decides the pixel size the shell icon is resolved at, and display size sets the
+        // drawn glyph's line weight.
+        var cacheKey = $"file-icon|{ext}|{size}|{displaySize:0.##}|{dpiScale:0.###}|{BrushHex("MutedBright")}";
         if (TryGetCachedRaster(cacheKey, out var cached))
         {
             return cached;
         }
 
-        ImageSource source;
-        if (ShouldUseWindowsFileIcon(ext))
+        if (SourceAppIcons.TryGetCached(null, path, size, dpiScale, out var warm))
         {
-            // The old path asked the shell for its "large" icon, which is 32x32, and the
-            // placeholder then drew it at 128 — a six-fold blowup. Go through the same resolver
-            // the source-app icons use, which requests a real size and stays crisp.
-            var crisp = SourceAppIcons.Resolve(null, path, size, VisualTreeHelper.GetDpi(this).DpiScaleX);
-            if (crisp is not null)
+            if (WindowsHasARealIcon(warm, size, dpiScale))
             {
-                return RememberRaster(cacheKey, crisp);
+                return RememberRaster(cacheKey, warm!);
             }
-
-            var windowsIcon = WatcherShellIconReader.TryGetIcon(path, large: size >= 48);
-            if (windowsIcon is not null)
+        }
+        else if (onRicher is not null)
+        {
+            // No cold shell call on the open path. Resolving an icon runs third-party shell code
+            // and can spend hundreds of milliseconds in it, which is exactly the stall the video
+            // thumbnails above were moved off the UI thread to avoid. The drawn glyph goes up now
+            // and the STA worker swaps the real icon in behind it.
+            SourceAppIcons.ResolveAsync(null, path, size, dpiScale, resolved =>
             {
-                using (windowsIcon)
+                if (!WindowsHasARealIcon(resolved, size, dpiScale))
                 {
-                    source = BitmapFromDrawingImage(windowsIcon);
-                    return RememberRaster(cacheKey, source);
+                    return;
                 }
+
+                Dispatcher.BeginInvoke(
+                    () => onRicher(RememberRaster(cacheKey, resolved!)),
+                    System.Windows.Threading.DispatcherPriority.Background);
+            });
+        }
+        else
+        {
+            // Callers with no callback sit off the open path (the preview header), where a
+            // two-frame flash of the glyph would cost more than the wait it hides.
+            var crisp = SourceAppIcons.Resolve(null, path, size, dpiScale);
+            if (WindowsHasARealIcon(crisp, size, dpiScale))
+            {
+                return RememberRaster(cacheKey, crisp!);
             }
         }
 
-        // Every audio format shares one mark rather than a different glyph per container.
-        var name = IsAudioFile("." + ext)
-            ? "file-icon-audio.svg"
-            : string.IsNullOrWhiteSpace(ext) ? "file-60.svg" : $"file-icon-{ext}.svg";
-        source = File.Exists(AssetIconPath(name)) ? RenderSvg(name, size) : RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize);
-        return RememberRaster(cacheKey, source);
+        return RememberRaster(cacheKey, FileFallbackGlyph(ext, size, displaySize));
     }
 
-    private static bool ShouldUseWindowsFileIcon(string ext)
+    /// <summary>
+    /// What to show when Windows has nothing for the type.
+    ///
+    /// The 54 per-extension SVGs are gone: they were a list that could never be finished, and the
+    /// drawn document names the extension instead. Audio is the one exception kept - every
+    /// container shares a single mark rather than a different glyph per codec, and now that Windows
+    /// answers for mp3/m4a/wav this only covers the ones nothing is registered to play.
+    /// </summary>
+    private ImageSource FileFallbackGlyph(string ext, int size, double displaySize)
     {
-        return ext is "doc" or "docx" or "xls" or "xlsx" or "xlsm" or "ppt" or "pptx" or "vsd" or "vsdx" or "pdf";
+        if (IsAudioFile("." + ext) && File.Exists(AssetIconPath(AudioIconAsset)))
+        {
+            return RenderSvg(AudioIconAsset, size);
+        }
+
+        return RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize, FileExtensionLabel(ext));
+    }
+
+    /// <summary>
+    /// The short label printed on the fallback document, e.g. ".vsdm" -> "VSD".
+    ///
+    /// Takes a bare extension or a whole file name; "archive.tar.gz" is a .gz file, so only the
+    /// last segment counts. Three characters is the cap - the width the page gives a label makes a
+    /// fourth character shrink the whole thing below readable (see AddExtensionLabel), and it is
+    /// what the 54 hand-drawn assets this replaces printed too. Longer extensions are cut rather
+    /// than ellipsised: "kicad_pcb" becomes "KIC", which reads as an abbreviation, where a dot or
+    /// an ellipsis at this size is one more smudge. The count is in text elements, not chars, so a
+    /// surrogate pair or a combining mark is never split down the middle into a replacement box.
+    /// </summary>
+    internal static string FileExtensionLabel(string? nameOrExtension)
+    {
+        if (string.IsNullOrWhiteSpace(nameOrExtension))
+        {
+            return string.Empty;
+        }
+
+        var label = nameOrExtension.Trim();
+        var lastDot = label.LastIndexOf('.');
+        if (lastDot >= 0)
+        {
+            label = label[(lastDot + 1)..];
+        }
+
+        label = label.Trim().ToUpperInvariant();
+        if (label.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var elements = new StringInfo(label);
+        return elements.LengthInTextElements > MaxLabelTextElements
+            ? elements.SubstringByTextElements(0, MaxLabelTextElements)
+            : label;
+    }
+
+    /// <summary>
+    /// True when the two icons are the same picture, pixel for pixel.
+    ///
+    /// This is how "Windows had nothing" is detected: the shell answers for an extension nothing
+    /// can possibly own with its generic page, so an icon identical to that reference is not an
+    /// icon at all and must not beat our own glyph. A missing reference means the question could
+    /// not be asked, and an unverified real icon is better than none - so that answers false.
+    /// </summary>
+    internal static bool IsUnknownDocumentIcon(byte[]? candidate, byte[]? unknownReference)
+    {
+        if (candidate is null || unknownReference is null || candidate.Length == 0)
+        {
+            return false;
+        }
+
+        return candidate.Length == unknownReference.Length && candidate.AsSpan().SequenceEqual(unknownReference);
+    }
+
+    private static bool WindowsHasARealIcon(ImageSource? icon, int size, double dpiScale) =>
+        icon is not null && !IsUnknownDocumentIcon(IconPixels(icon), UnknownDocumentPixels(size, dpiScale));
+
+    /// <summary>
+    /// The pixels of the page Windows shows for a type nothing is registered to handle, resolved
+    /// through the same call and at the same size and DPI as the icon it will be compared against.
+    /// Resolve at a different size and every icon looks different from every other icon.
+    ///
+    /// Computed once per size and DPI. In practice it lands on the STA worker, because the first
+    /// candidate for a given size is always a cache miss and takes the async branch above.
+    /// </summary>
+    private static byte[]? UnknownDocumentPixels(int size, double dpiScale)
+    {
+        var key = $"{size}|{dpiScale:0.###}";
+        lock (UnknownDocumentGate)
+        {
+            if (UnknownDocumentPixelCache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        byte[]? pixels = null;
+        try
+        {
+            // The resolver only speaks in paths, so the unownable extension needs a file to sit
+            // on. Empty, in temp, created once and left there.
+            var probe = Path.Combine(Path.GetTempPath(), "Clip", "unknown-file-type.zzzunregistered");
+            Directory.CreateDirectory(Path.GetDirectoryName(probe)!);
+            if (!File.Exists(probe))
+            {
+                File.WriteAllBytes(probe, []);
+            }
+
+            pixels = IconPixels(SourceAppIcons.Resolve(null, probe, size, dpiScale));
+        }
+        catch
+        {
+            // No reference means nothing gets judged, which is the safe direction.
+        }
+
+        lock (UnknownDocumentGate)
+        {
+            UnknownDocumentPixelCache[key] = pixels;
+        }
+
+        return pixels;
+    }
+
+    /// <summary>
+    /// Raw pixels of a resolved shell icon. Bgra32 is what SourceAppIcons produces; anything else
+    /// did not come from that path and is not comparable to the reference, so it is not judged.
+    /// </summary>
+    private static byte[]? IconPixels(ImageSource? icon)
+    {
+        if (icon is not BitmapSource bitmap || bitmap.Format != PixelFormats.Bgra32)
+        {
+            return null;
+        }
+
+        var stride = bitmap.PixelWidth * 4;
+        var pixels = new byte[stride * bitmap.PixelHeight];
+        bitmap.CopyPixels(pixels, stride, 0);
+        return pixels;
     }
 
     private ImageSource RenderSvg(string fileName, int size, double scaleX = 1.0, string? color = null)
