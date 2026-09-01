@@ -10311,6 +10311,12 @@ public partial class MainWindow : Window
         EnsureHotkeyRegistered(reason);
     }
 
+    /// <summary>
+    /// The Muted grey, shared because SettingsWindow's icon cache is keyed by it and a warm-up
+    /// typed as its own literal goes stale silently - it just stops warming anything.
+    /// </summary>
+    internal const string MutedHex = "#A3A3A3";
+
     private void ApplyTheme() => ApplyTheme(save: true);
 
     /// <summary>
@@ -10347,7 +10353,7 @@ public partial class MainWindow : Window
         // under it instead of a flat sheet. Raised here rather than by thickening the glass:
         // Muted is opaque and independent of the tint, so this buys legibility without buying back
         // the opacity the whole change exists to remove.
-        SetBrush("Muted", "#A3A3A3");
+        SetBrush("Muted", MutedHex);
         SetBrush("Muted2", "#BBBBBB");
         SetBrush("Muted3", "#777777");
         // Raycast palette: fixed brand red (#FF6363) used sparingly, never the Windows accent.
@@ -13798,8 +13804,12 @@ internal sealed class SettingsWindow : Window
             _ = TransparentButtonTemplateCache.Value;
             _ = SubtleSettingsButtonTemplateCache.Value;
             _ = InfoBadgeButtonTemplateCache.Value;
-            WarmDropdownIcon("#646464");
-            WarmDropdownIcon("#989898");
+            // Keyed by the Muted the palette actually installs. These were "#646464" and
+            // "#989898", neither of which is a colour this app has ever asked for - the warm
+            // filled two cache entries nothing reads and the first real chevron still rendered
+            // cold, which is the entire thing the warm exists to avoid. Kept in sync with
+            // ApplyTheme's Muted; a stale hex here is silent, so it is derived, not typed.
+            WarmDropdownIcon(MainWindow.MutedHex);
             ShellLog.Info("settings caches warmed");
         }
         catch (Exception ex)

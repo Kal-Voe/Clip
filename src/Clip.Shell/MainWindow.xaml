@@ -36,21 +36,29 @@
         PreviewKeyDown="OnWindowPreviewKeyDown"
         KeyDown="OnWindowKeyDown">
     <Window.Resources>
-        <SolidColorBrush x:Key="Bg" Color="#1F1E1F"/>
-        <SolidColorBrush x:Key="Surface" Color="#242324"/>
-        <SolidColorBrush x:Key="Surface2" Color="#2A282A"/>
-        <SolidColorBrush x:Key="Surface3" Color="#343134"/>
-        <SolidColorBrush x:Key="Line" Color="#3A373A"/>
-        <SolidColorBrush x:Key="Line2" Color="#464246"/>
-        <SolidColorBrush x:Key="Text" Color="#F2F0F2"/>
-        <SolidColorBrush x:Key="Muted" Color="#8F898F"/>
-        <SolidColorBrush x:Key="Muted2" Color="#C7C1C7"/>
-        <SolidColorBrush x:Key="Muted3" Color="#6B656B"/>
+        <!-- ApplyTheme owns these at runtime: it runs from the constructor, straight after
+             InitializeComponent and before the window has ever painted, and SetBrush overwrites
+             every key below. So these values are never what you see - but they ARE what anyone
+             reading this file believes the app looks like, and they used to be a different hue
+             family entirely (warm greys with a magenta cast: #1F1E1F, #8F898F) against the
+             neutral greys that actually ship. Kept, because the designer surface and any lookup
+             before ApplyTheme still need them, but held to the same values ApplyTheme installs.
+             Change one, change the other. -->
+        <SolidColorBrush x:Key="Bg" Color="#1A1A1A"/>
+        <SolidColorBrush x:Key="Surface" Color="#212121"/>
+        <SolidColorBrush x:Key="Surface2" Color="#272727"/>
+        <SolidColorBrush x:Key="Surface3" Color="#323232"/>
+        <SolidColorBrush x:Key="Line" Color="#494949"/>
+        <SolidColorBrush x:Key="Line2" Color="#5A5A5A"/>
+        <SolidColorBrush x:Key="Text" Color="#F1F1F1"/>
+        <SolidColorBrush x:Key="Muted" Color="#A3A3A3"/>
+        <SolidColorBrush x:Key="Muted2" Color="#BBBBBB"/>
+        <SolidColorBrush x:Key="Muted3" Color="#777777"/>
         <SolidColorBrush x:Key="Accent" Color="#FF6363"/>
         <SolidColorBrush x:Key="TextCursor" Color="#FF6363"/>
-        <SolidColorBrush x:Key="AccentSoft" Color="#2C2A2C"/>
-        <SolidColorBrush x:Key="Selected" Color="#363336"/>
-        <SolidColorBrush x:Key="SelectedBorder" Color="#4E4A4E"/>
+        <SolidColorBrush x:Key="AccentSoft" Color="#2D2D2D"/>
+        <SolidColorBrush x:Key="Selected" Color="#373737"/>
+        <SolidColorBrush x:Key="SelectedBorder" Color="#525252"/>
         <SolidColorBrush x:Key="TextSelection" Color="#FF6363"/>
         <SolidColorBrush x:Key="Danger" Color="#D56B5D"/>
 
