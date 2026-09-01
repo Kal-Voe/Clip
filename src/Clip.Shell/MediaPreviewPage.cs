@@ -474,6 +474,12 @@ internal static class MediaPreviewPage
                     wrap.classList.add('idle');
                     closeMenu();
                   });
+
+                  // Show them once on open, then let the same idle timer take them away. Waking
+                  // only on pointer movement meant a video selected from the list came up bare:
+                  // the pointer is over the row when the preview loads and never moves, so nothing
+                  // announced that this thing plays, or where expand and the menu were.
+                  wake();
                 }
 
                 // How close to the window border counts as grabbing it to resize. Both the gesture
