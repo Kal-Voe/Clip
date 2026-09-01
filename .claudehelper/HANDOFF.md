@@ -122,6 +122,38 @@ Items 2 and 3 of the list below, done together because they share one drag path.
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Dark-only, Settings takes over the window, and files by default (2026-09-01, v1.8.0)
+
+- **The light UI is gone**, dark values inlined rather than pinned behind a flag, and the theme
+  picker with it. The **light app icon is the only icon**; the dark artwork and its plumbing
+  (including the watcher's copy) are deleted. `Theme`/`AppIcon` keys left in an existing
+  settings.json are ignored on load and drop out on the next save.
+- **Settings replaces the palette in the same window** instead of floating over it. Reuses the
+  existing hosted-overlay path; the palette's chrome is Hidden (not Collapsed) so search text,
+  selection and scroll come back exactly as they were. Escape closes Settings, not the palette.
+  Palette size unchanged -- the panel gains 80x20 over the card it replaced.
+- **The right-click menu closes on any outside click.** `StaysOpen=false` only sees clicks its own
+  capture catches, which this layered, non-activating, topmost window regularly denies it; the
+  low-level mouse hook that already dismisses the palette now closes the menu too.
+- **Dragging across monitors no longer jitters.** My own bug: the `DpiChanged` handler added for
+  the centring fix called `PositionOnMouseScreen`, so every DPI boundary crossed mid-drag yanked
+  the window to the centre of the new monitor. Suppressed while the OS move loop is running
+  (WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE); the land-centred-after-a-rescale behaviour it was added for
+  is kept.
+- **`DragClipsAsFiles` defaults on.** Verified through the real app: a text clip now advertises
+  `FileDrop` at a materialised .txt *plus* `Text/UnicodeText`, so the desktop gets a file and a
+  text field still gets text. The cost stays what it was and is now stated in the setting's own
+  description: apps that prefer files (VS Code, Slack) take the file.
+
+**Note for existing installs:** the default only reaches settings.json files that have never saved
+the key. Isaiah's already had `false`, so it was flipped by hand on his machine -- anyone upgrading
+will need to switch it on themselves.
+
+### Not hand-verified
+
+The menu dismissal and the cross-monitor drag are reasoned and unit-covered but not driven on
+screen; both need a real hand.
+
 ## Four follow-ups: light theme, preview drag, multi-select, and the CIDA that did not survive (2026-08-31, v1.7.0)
 
 **1. Light theme — checked, nothing to fix.** Ran the app in Light and looked: text readable, chips
