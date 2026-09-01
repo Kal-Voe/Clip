@@ -12732,6 +12732,33 @@ public partial class MainWindow : Window
 
     // Replaces the stock ListBoxItem template: the default one paints hover/selection with the
     // Windows system highlight blue, which is the only place the OS palette could still leak in.
+    /// <summary>
+    /// One app row - icon, name, subtitle - for the two app pickers, which carried
+    /// character-identical copies of this apart from a single property. The excluded-app picker
+    /// trimmed an over-long subtitle; Open With did not. Neither was a decision: Open With shows
+    /// a short source label and the other shows a full executable path, so only one of them had
+    /// been bitten yet. Trimming is on for both here, because a subtitle running out of its panel
+    /// is a bug in either window.
+    /// </summary>
+    internal static StackPanel AppRowContent(ImageSource? icon, string title, string subtitle, WpfBrush text, WpfBrush muted)
+    {
+        var outer = new StackPanel { Orientation = WpfOrientation.Horizontal };
+        outer.Children.Add(new WpfImage
+        {
+            Source = icon,
+            Width = 26,
+            Height = 26,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var panel = new StackPanel { Orientation = WpfOrientation.Vertical, VerticalAlignment = VerticalAlignment.Center };
+        panel.Children.Add(new TextBlock { Text = title, Foreground = text, FontSize = 13, FontWeight = FontWeights.Medium });
+        panel.Children.Add(new TextBlock { Text = subtitle, Foreground = muted, FontSize = 11, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+        outer.Children.Add(panel);
+        return outer;
+    }
+
     internal static Style PaletteListItemStyle(WpfBrush hoverFill, WpfBrush selectedFill)
     {
         var root = new FrameworkElementFactory(typeof(Border), "Bd");
@@ -13217,24 +13244,8 @@ internal sealed class OpenWithWindow : Window
         }
     }
 
-    private StackPanel RowContent(ImageSource? icon, string title, string subtitle)
-    {
-        var outer = new StackPanel { Orientation = WpfOrientation.Horizontal };
-        outer.Children.Add(new WpfImage
-        {
-            Source = icon,
-            Width = 26,
-            Height = 26,
-            Stretch = Stretch.Uniform,
-            Margin = new Thickness(0, 0, 10, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        var panel = new StackPanel { Orientation = WpfOrientation.Vertical, VerticalAlignment = VerticalAlignment.Center };
-        panel.Children.Add(new TextBlock { Text = title, Foreground = _text, FontSize = 13, FontWeight = FontWeights.Medium });
-        panel.Children.Add(new TextBlock { Text = subtitle, Foreground = _muted, FontSize = 11, Margin = new Thickness(0, 2, 0, 0) });
-        outer.Children.Add(panel);
-        return outer;
-    }
+    private StackPanel RowContent(ImageSource? icon, string title, string subtitle) =>
+        MainWindow.AppRowContent(icon, title, subtitle, _text, _muted);
 
     private static bool TryGetCachedApps(string targetPath, out List<WatcherAppChoice> apps)
     {
@@ -13631,24 +13642,8 @@ internal sealed class ExcludedAppPickerWindow : Window
         }
     }
 
-    private StackPanel RowContent(ImageSource? icon, string title, string subtitle)
-    {
-        var outer = new StackPanel { Orientation = WpfOrientation.Horizontal };
-        outer.Children.Add(new WpfImage
-        {
-            Source = icon,
-            Width = 26,
-            Height = 26,
-            Stretch = Stretch.Uniform,
-            Margin = new Thickness(0, 0, 10, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        var panel = new StackPanel { Orientation = WpfOrientation.Vertical, VerticalAlignment = VerticalAlignment.Center };
-        panel.Children.Add(new TextBlock { Text = title, Foreground = _text, FontSize = 13, FontWeight = FontWeights.Medium });
-        panel.Children.Add(new TextBlock { Text = subtitle, Foreground = _muted, FontSize = 11, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
-        outer.Children.Add(panel);
-        return outer;
-    }
+    private StackPanel RowContent(ImageSource? icon, string title, string subtitle) =>
+        MainWindow.AppRowContent(icon, title, subtitle, _text, _muted);
 
     private ImageSource? IconForApp(WatcherAppChoice app)
     {
