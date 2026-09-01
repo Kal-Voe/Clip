@@ -23,10 +23,19 @@ namespace Clip.Shell;
 /// What is left is the one degree of freedom OLE actually gives a drag source: the target asks
 /// these questions <em>live</em>, through the data object, while the pointer is already over it —
 /// <c>QueryGetData</c>, <c>EnumFormatEtc</c> and <c>GetData</c> are all calls into this object
-/// during the drag. So the answer can depend on the window under the cursor at call time. Over an
-/// Explorer folder or the desktop the materialised file is advertised and a real .txt lands; over
-/// anything else it is not advertised at all, so a Chromium input field has no file to attach and
-/// inserts the text.
+/// during the drag. So the answer can depend on the window under the cursor at call time.
+///
+/// The default is "yes, there is a file", and that is the part that was got wrong first and is
+/// load-bearing. Not every target asks live. Chromium does — it calls in on every DragOver, so
+/// answering "no file" while the pointer is over it is what makes the text land in the input
+/// field. Explorer does not: it takes one look at the format list at the moment the drag starts,
+/// while the cursor is still over the palette, and never asks again. Measured, not assumed —
+/// with the answer keyed on the class alone, Explorer made <em>zero</em> calls into this object
+/// for the whole drag and refused the drop 3/3, and the same drag with the file always advertised
+/// dropped a .txt 3/3. So the pointer being over one of Clip's own windows answers yes, which is
+/// what puts the file in the snapshot Explorer reads. Over anything that is not the shell and not
+/// ours, the answer is no — and the only targets that ever see that answer are the ones that
+/// bothered to ask.
 ///
 /// Only the <em>materialised</em> file is hidden this way — the .txt or .url Clip invented for the
 /// drop. Clips that genuinely are files (a Files clip, an image's stored asset) keep advertising
@@ -113,8 +122,9 @@ internal sealed class ShellAwareDragData : WpfIDataObject
         _inner.SetData(format, data, autoConvert);
 
     /// <summary>
-    /// Whether the window under the cursor belongs to the shell — an Explorer folder window or the
-    /// desktop — and would therefore make a dropped file into a real file.
+    /// Whether a file is worth offering to whatever is under the cursor: the shell — an Explorer
+    /// folder window or the desktop, where a dropped file becomes a real file — or one of Clip's
+    /// own windows, which is where the cursor is when the drag starts and the snapshot is taken.
     ///
     /// The cursor position is read live rather than taken from the drag, because the whole point
     /// is that this is asked again each time the pointer enters a new target. The drag preview
@@ -142,8 +152,20 @@ internal sealed class ShellAwareDragData : WpfIDataObject
         // The hit is on a child — DesktopChildSiteBridge inside a folder window, SysListView32 on
         // the desktop — and it is the top-level window that carries the class name worth reading.
         var root = GetAncestor(window, GaRoot);
-        return ClassNameOf(root == IntPtr.Zero ? window : root) is
-            "CabinetWClass" or "ExploreWClass" or "Progman" or "WorkerW";
+        if (root == IntPtr.Zero)
+        {
+            root = window;
+        }
+
+        // Clip's own palette is what the cursor is over when the drag starts, and that is when the
+        // shell takes its one snapshot. Anything of ours answers yes.
+        GetWindowThreadProcessId(root, out var owner);
+        if (owner == CurrentProcessId)
+        {
+            return true;
+        }
+
+        return ClassNameOf(root) is "CabinetWClass" or "ExploreWClass" or "Progman" or "WorkerW";
     }
 
     private static string ClassNameOf(IntPtr window)
@@ -154,6 +176,8 @@ internal sealed class ShellAwareDragData : WpfIDataObject
     }
 
     private const uint GaRoot = 2;
+
+    private static readonly uint CurrentProcessId = (uint)Environment.ProcessId;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Point
@@ -174,4 +198,7 @@ internal sealed class ShellAwareDragData : WpfIDataObject
 
     [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr window, StringBuilder buffer, int capacity);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 }
