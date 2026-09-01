@@ -73,12 +73,13 @@ internal sealed class ClipShellSettings
     /// Put a real file in the drag as well as the text, so dropping a text or link clip on the
     /// desktop saves a .txt or .url.
     ///
-    /// Off by default, and the default is the interesting part. Apps that accept both a file and
-    /// text from one drag mostly prefer the file: VS Code opens it, Slack and Gmail attach it.
-    /// Turning this on therefore buys the occasional drop onto the desktop at the cost of the
-    /// everyday drop into a text field, so the everyday one is what is shipped switched on.
+    /// On by default. The desktop drop is the one people ask for, and it is the only gesture that
+    /// cannot work without the file. The cost is real and stays documented rather than hidden:
+    /// apps that accept both a file and text from one drag mostly prefer the file, so VS Code
+    /// opens it and Slack and Gmail attach it instead of inserting the text. The setting is how
+    /// someone who lives in those apps trades back.
     /// </summary>
-    public bool DragClipsAsFiles { get; set; }
+    public bool DragClipsAsFiles { get; set; } = true;
 
     /// <summary>
     /// The acrylic glass look: real blur-behind sampled from the desktop, with the interior zones
@@ -125,7 +126,7 @@ internal sealed class ClipShellSettings
         InstallUpdatesAutomatically = true;
         ExtractTextFromImages = false;
         ShowSourceAppInList = true;
-        DragClipsAsFiles = false;
+        DragClipsAsFiles = true;
         TranslucentBackground = true;
         CapturePaused = false;
         ClipboardFolderPath = null;
@@ -4800,10 +4801,10 @@ public partial class MainWindow : Window
     /// Writes the clip out as a real file and returns its path, so a drop on the desktop leaves a
     /// .txt or a .url behind the way a dropped image leaves a .png.
     ///
-    /// Gated on a setting, and off by default, because the FileDrop this produces is not free.
-    /// Plenty of apps prefer a file to text when a drag offers both — VS Code opens it in a new
-    /// tab, Slack and Gmail attach it — so switching this on trades "drag text into a field",
-    /// which is the everyday gesture, for "drag text onto the desktop", which is the rare one.
+    /// Gated on a setting, on by default, because the FileDrop this produces is not free. Plenty
+    /// of apps prefer a file to text when a drag offers both — VS Code opens it in a new tab,
+    /// Slack and Gmail attach it — so the setting is what buys "drag text into a field" back for
+    /// anyone who wants it more than "drag text onto the desktop".
     /// Format order cannot rescue that: WPF's DataObject keeps its formats in a hash table, so
     /// the order the shell enumerates them in is not insertion order and is not even stable
     /// between runs, and the apps that matter query for CF_HDROP by name regardless.
@@ -15065,7 +15066,7 @@ internal sealed class SettingsWindow : Window
     {
         return ControlRow(
             "Drag clips out as files",
-            "Dropping a text or link clip on the desktop leaves a .txt or .url file. Off by default: with this on, apps that prefer files — VS Code, Slack — take the file instead of the text.",
+            "Dropping a text or link clip on the desktop leaves a .txt or .url file. On by default, and the tradeoff is real: apps that prefer files — VS Code, Slack — then take the file instead of inserting the text.",
             StyledDropdown(
                 _settings.DragClipsAsFiles ? "On" : "Off",
                 new[] { "Off", "On" },
