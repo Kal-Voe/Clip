@@ -266,11 +266,43 @@
             </Setter>
         </Style>
 
-        <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource FilterButton}">
+        <!-- No box. These three buttons are a glyph and nothing else, so the hover state is the
+             glyph's own stroke coming up to full rather than a 28x28 outline lighting around a
+             15px mark - at that ratio the border reads as the control and the icon as decoration.
+
+             The brightening is opacity because the glyph bakes its colour in when it is drawn:
+             these are rendered at Text and held at 0.75, which lands on MutedBright over the
+             shell background, then go to full on hover. -->
+        <Style x:Key="IconButton" TargetType="Button">
             <Setter Property="Width" Value="28"/>
             <Setter Property="Height" Value="28"/>
             <Setter Property="Padding" Value="0"/>
-            <Setter Property="Foreground" Value="{DynamicResource MutedBright}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <!-- #01000000, not Transparent: this is a layered window, where a fully
+                             transparent pixel is click-through and the hit area would vanish
+                             everywhere the glyph itself is not drawn. -->
+                        <Border x:Name="Root" Background="#01000000">
+                            <ContentPresenter x:Name="Glyph"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Opacity="0.75"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Glyph" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Glyph" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- Footer keycaps are reference labels, not actions. Painting them with the accent made

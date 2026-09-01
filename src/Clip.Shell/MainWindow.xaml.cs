@@ -10440,12 +10440,12 @@ public partial class MainWindow : Window
         // The display sizes here must match the Width/Height on the matching Image in
         // MainWindow.xaml - that is what sets each icon's real line weight (see IconPen).
         SearchGlyphIcon.Source = RenderChromeIcon(ChromeIconKind.Search, "Muted", 14);
-        SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "MutedBright", 16);
-        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "MutedBright", 12);
+        SettingsIcon.Source = RenderChromeIcon(ChromeIconKind.Settings, "Text", 16);
+        NewSnippetIcon.Source = RenderChromeIcon(ChromeIconKind.Plus, "Text", 12);
         DateDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "all" ? "Text" : "MutedBright", ChevronDisplaySize);
         FileDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, _kindFilter == "files" ? "Text" : "MutedBright", ChevronDisplaySize);
         MediaDropIcon.Source = RenderChromeIcon(ChromeIconKind.ChevronDown, IsMediaFilter(_kindFilter) ? "Text" : "MutedBright", ChevronDisplaySize);
-        ExpandImageIcon.Source = RenderChromeIcon(ChromeIconKind.Expand, "MutedBright", 15);
+        ExpandImageIcon.Source = RenderChromeIcon(ChromeIconKind.Expand, "Text", 15);
         _chromeIconsReady = true;
     }
 

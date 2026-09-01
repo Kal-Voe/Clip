@@ -1969,3 +1969,23 @@ render methods by allocating a MainWindow with `GetUninitializedObject` and then
 invoking `Window`'s constructor on the allocated object — the ctor is what makes
 `FindResource` work; without it, setting `Resources` throws. Rebuild it whenever
 an icon changes; you cannot eyeball code-drawn icons any other way.
+
+## 2026-09-01 (later still) — Icon buttons lost their box; v1.11.1
+
+`IconButton` no longer derives from `FilterButton`. It has its own template: no
+border, no corner radius, just the glyph. Hover brightens the glyph's own stroke
+instead of lighting a 28x28 outline around a 15px mark — at that ratio the
+border read as the control and the icon as decoration.
+
+The brightening is **opacity**, not a colour swap, because a code-drawn glyph
+bakes its colour in at render time and a `Foreground` trigger cannot reach it.
+The three icons are now rendered at `Text` and held at `0.75`, which lands on
+`MutedBright` over the shell background, then go to full on hover.
+
+The hit surface is `#01000000`, not `Transparent`: this is a layered window, so
+a fully transparent pixel is click-through and the button would only be
+clickable where its strokes happen to fall.
+
+All three users of the style changed together — settings, expand, and the
+new-snippet plus. Isaiah named the first two; leaving the third boxed would have
+read as an oversight rather than a choice.
