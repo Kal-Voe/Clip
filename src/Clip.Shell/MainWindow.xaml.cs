@@ -10484,6 +10484,7 @@ public partial class MainWindow : Window
         Email,
         Folder,
         Image,
+        Video,
         Audio,
         File,
     }
@@ -10563,14 +10564,10 @@ public partial class MainWindow : Window
         switch (kind)
         {
             case ChromeIconKind.Settings:
-                drawing.Children.Add(new GeometryDrawing(null, pen, new EllipseGeometry(new System.Windows.Point(12, 12), 4.2, 4.2)));
-                for (var i = 0; i < 8; i++)
-                {
-                    var angle = (Math.PI / 4) * i;
-                    drawing.Children.Add(new GeometryDrawing(null, pen, new LineGeometry(
-                        new System.Windows.Point(12 + Math.Cos(angle) * 7.1, 12 + Math.Sin(angle) * 7.1),
-                        new System.Windows.Point(12 + Math.Cos(angle) * 9.6, 12 + Math.Sin(angle) * 9.6))));
-                }
+                // lucide/settings. The ring of eight straight spokes this replaces read as a sun,
+                // not a gear: teeth are what make a gear a gear, and it never had any.
+                AddPaths(drawing, pen, "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915");
+                AddCircle(drawing, pen, 12, 12, 3);
                 break;
 
             case ChromeIconKind.Search:
@@ -10586,18 +10583,12 @@ public partial class MainWindow : Window
                 break;
 
             case ChromeIconKind.Expand:
-                AddLine(drawing, pen, 5, 5, 10, 5);
-                AddLine(drawing, pen, 5, 5, 5, 10);
-                AddLine(drawing, pen, 5, 5, 10, 10);
-                AddLine(drawing, pen, 19, 5, 14, 5);
-                AddLine(drawing, pen, 19, 5, 19, 10);
-                AddLine(drawing, pen, 19, 5, 14, 10);
-                AddLine(drawing, pen, 5, 19, 10, 19);
-                AddLine(drawing, pen, 5, 19, 5, 14);
-                AddLine(drawing, pen, 5, 19, 10, 14);
-                AddLine(drawing, pen, 19, 19, 14, 19);
-                AddLine(drawing, pen, 19, 19, 19, 14);
-                AddLine(drawing, pen, 19, 19, 14, 14);
+                // lucide/maximize.
+                AddPaths(drawing, pen,
+                    "M8 3H5a2 2 0 0 0-2 2v3",
+                    "M21 8V5a2 2 0 0 0-2-2h-3",
+                    "M3 16v3a2 2 0 0 0 2 2h3",
+                    "M16 21h3a2 2 0 0 0 2-2v-3");
                 break;
         }
 
@@ -10682,8 +10673,6 @@ public partial class MainWindow : Window
 
         var stroke = new SolidColorBrush(((SolidColorBrush)FindResource("MutedBright")).Color);
         stroke.Freeze();
-        var fill = new SolidColorBrush(((SolidColorBrush)FindResource("MutedBright")).Color) { Opacity = 0.16 };
-        fill.Freeze();
         var pen = IconPen(stroke, displaySize);
 
         var drawing = new DrawingGroup();
@@ -10692,68 +10681,63 @@ public partial class MainWindow : Window
         switch (kind)
         {
             case ItemVectorIconKind.Text:
-                AddDocumentOutline(drawing, pen, fill);
-                AddLine(drawing, pen, 8.5, 12, 16.5, 12);
-                AddLine(drawing, pen, 8.5, 15, 17, 15);
-                AddLine(drawing, pen, 8.5, 18, 14.5, 18);
+                // lucide/text-initial.
+                AddPaths(drawing, pen,
+                    "M15 5h6",
+                    "M15 12h6",
+                    "M3 19h18",
+                    "m3 12 3.553-7.724a.5.5 0 0 1 .894 0L11 12",
+                    "M3.92 10h6.16");
                 break;
 
             case ItemVectorIconKind.Link:
-                drawing.Children.Add(new GeometryDrawing(null, pen, new RectangleGeometry(new Rect(3.8, 8.3, 9.4, 7.4), 3.7, 3.7)));
-                drawing.Children.Add(new GeometryDrawing(null, pen, new RectangleGeometry(new Rect(10.8, 8.3, 9.4, 7.4), 3.7, 3.7)));
-                AddLine(drawing, pen, 9.2, 12, 14.8, 12);
+                // lucide/link.
+                AddPaths(drawing, pen,
+                    "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
+                    "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71");
                 break;
 
             case ItemVectorIconKind.Email:
-                // Stroked @ symbol on the same 24x24 grid the other item icons use.
-                drawing.Children.Add(new GeometryDrawing(
-                    null,
-                    pen,
-                    Geometry.Parse("M16 20.064A9 9 0 1 1 21 12v1.5a2.5 2.5 0 0 1-5 0V8m0 4a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z")));
+                // lucide/at-sign.
+                AddCircle(drawing, pen, 12, 12, 4);
+                AddPaths(drawing, pen, "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8");
                 break;
 
             case ItemVectorIconKind.Folder:
-                drawing.Children.Add(new GeometryDrawing(fill, pen, PolygonGeometry(
-                    new System.Windows.Point(3.5, 7.5),
-                    new System.Windows.Point(8.8, 7.5),
-                    new System.Windows.Point(11, 9.7),
-                    new System.Windows.Point(20.5, 9.7),
-                    new System.Windows.Point(20.5, 18.5),
-                    new System.Windows.Point(3.5, 18.5))));
+                // lucide/folder-closed.
+                AddPaths(drawing, pen,
+                    "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+                    "M2 10h20");
                 break;
 
             case ItemVectorIconKind.Image:
-                drawing.Children.Add(new GeometryDrawing(fill, pen, new RectangleGeometry(new Rect(4.5, 5.5, 15, 13), 2.8, 2.8)));
-                drawing.Children.Add(new GeometryDrawing(stroke, null, new EllipseGeometry(new System.Windows.Point(14.8, 9.2), 1.25, 1.25)));
-                drawing.Children.Add(new GeometryDrawing(null, pen, PolylineGeometry(
-                    new System.Windows.Point(6.8, 16),
-                    new System.Windows.Point(10.2, 12.6),
-                    new System.Windows.Point(12.7, 15.1),
-                    new System.Windows.Point(14.2, 13.6),
-                    new System.Windows.Point(17.4, 16.8))));
+                // lucide/camera.
+                AddPaths(drawing, pen, "M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z");
+                AddCircle(drawing, pen, 12, 13, 3);
+                break;
+
+            case ItemVectorIconKind.Video:
+                // lucide/video. Video had no glyph of its own: whenever Windows had neither a
+                // thumbnail nor a registered icon it fell through to the document, so a clip
+                // showed a page with MP4 written on it rather than reading as a video.
+                AddPaths(drawing, pen, "m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5");
+                drawing.Children.Add(new GeometryDrawing(null, pen, new RectangleGeometry(new Rect(2, 6, 14, 12), 2, 2)));
                 break;
 
             case ItemVectorIconKind.Audio:
-                // Two beamed notes: stem-and-beam as one open polyline, a filled head on each
-                // stem foot. Same outline-plus-soft-fill treatment as Folder and Image.
-                drawing.Children.Add(new GeometryDrawing(null, pen, PolylineGeometry(
-                    new System.Windows.Point(9.5, 17.4),
-                    new System.Windows.Point(9.5, 6.2),
-                    new System.Windows.Point(19.4, 4.3),
-                    new System.Windows.Point(19.4, 15.1))));
-                drawing.Children.Add(new GeometryDrawing(fill, pen, new EllipseGeometry(new System.Windows.Point(7.1, 17.4), 2.4, 2.4)));
-                drawing.Children.Add(new GeometryDrawing(fill, pen, new EllipseGeometry(new System.Windows.Point(17.0, 15.1), 2.4, 2.4)));
+                // lucide/music.
+                AddPaths(drawing, pen, "M9 18V5l12-2v13");
+                AddCircle(drawing, pen, 6, 18, 3);
+                AddCircle(drawing, pen, 18, 16, 3);
                 break;
 
             case ItemVectorIconKind.File:
-                AddDocumentOutline(drawing, pen, fill);
-                if (string.IsNullOrEmpty(label))
-                {
-                    // No extension to print: two ruled lines, the way this glyph always looked.
-                    AddLine(drawing, pen, 8.5, 14, 16, 14);
-                    AddLine(drawing, pen, 8.5, 17, 14, 17);
-                }
-                else
+                // lucide/file. With no extension to print this is the bare page on purpose: the
+                // generic flat document, which is what the two ruled lines were imitating.
+                AddPaths(drawing, pen,
+                    "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+                    "M14 2v5a1 1 0 0 0 1 1h5");
+                if (!string.IsNullOrEmpty(label))
                 {
                     AddExtensionLabel(drawing, stroke, label);
                 }
@@ -10773,24 +10757,33 @@ public partial class MainWindow : Window
         return image;
     }
 
-    private static void AddDocumentOutline(DrawingGroup drawing, WpfPen pen, WpfBrush fill)
+    /// <summary>
+    /// Lucide path data, drawn on the same 24 grid at the app's own derived line weight.
+    ///
+    /// The upstream `d` strings are kept verbatim so an icon is updated by pasting a new one in
+    /// rather than re-deriving its points by hand - which is how the gear ended up a sun.
+    /// </summary>
+    private static void AddPaths(DrawingGroup drawing, WpfPen pen, params string[] data)
     {
-        drawing.Children.Add(new GeometryDrawing(fill, pen, PolygonGeometry(
-            new System.Windows.Point(6.5, 3.8),
-            new System.Windows.Point(14.7, 3.8),
-            new System.Windows.Point(18.5, 7.6),
-            new System.Windows.Point(18.5, 20.2),
-            new System.Windows.Point(6.5, 20.2))));
-        AddLine(drawing, pen, 14.7, 3.8, 14.7, 8);
-        AddLine(drawing, pen, 14.7, 8, 18.5, 8);
+        foreach (var d in data)
+        {
+            var geometry = Geometry.Parse(d);
+            geometry.Freeze();
+            drawing.Children.Add(new GeometryDrawing(null, pen, geometry));
+        }
     }
 
-    // The box the extension is printed into, inside the document outline (x 6.5..18.5,
-    // y 3.8..20.2) and clear of the dog-ear, which ends at y 8.
-    private const double LabelBoxWidth = 9.6;
-    private const double LabelBoxHeight = 4.2;
-    private const double LabelCenterX = 12.5;
-    private const double LabelCenterY = 15.0;
+    private static void AddCircle(DrawingGroup drawing, WpfPen pen, double cx, double cy, double r)
+    {
+        drawing.Children.Add(new GeometryDrawing(null, pen, new EllipseGeometry(new System.Windows.Point(cx, cy), r, r)));
+    }
+
+    // The box the extension is printed into, inside lucide/file's page (x 4..20, y 2..22) and
+    // clear of the dog-ear, which ends at y 8.
+    private const double LabelBoxWidth = 11.0;
+    private const double LabelBoxHeight = 4.6;
+    private const double LabelCenterX = 12.0;
+    private const double LabelCenterY = 15.2;
 
     /// <summary>
     /// The extension, printed on the document. This is what makes the glyph cover every extension
@@ -10855,22 +10848,6 @@ public partial class MainWindow : Window
             for (var i = 1; i < points.Length; i++)
             {
                 context.LineTo(points[i], isStroked: true, isSmoothJoin: false);
-            }
-        }
-
-        geometry.Freeze();
-        return geometry;
-    }
-
-    private static StreamGeometry PolygonGeometry(params System.Windows.Point[] points)
-    {
-        var geometry = new StreamGeometry();
-        using (var context = geometry.Open())
-        {
-            context.BeginFigure(points[0], isFilled: true, isClosed: true);
-            for (var i = 1; i < points.Length; i++)
-            {
-                context.LineTo(points[i], isStroked: true, isSmoothJoin: true);
             }
         }
 
@@ -11843,9 +11820,10 @@ public partial class MainWindow : Window
                 if (Directory.Exists(path)) return RenderItemVectorIcon(ItemVectorIconKind.Folder, size, displaySize);
                 if (!preferRichPreview)
                 {
-                    return IsImageFile(Path.GetExtension(path).ToLowerInvariant())
-                        ? RenderItemVectorIcon(ItemVectorIconKind.Image, size, displaySize)
-                        : RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize);
+                    var quickExt = Path.GetExtension(path).ToLowerInvariant();
+                    if (IsImageFile(quickExt)) return RenderItemVectorIcon(ItemVectorIconKind.Image, size, displaySize);
+                    if (IsVideoFile(quickExt)) return RenderItemVectorIcon(ItemVectorIconKind.Video, size, displaySize);
+                    return RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize);
                 }
 
                 if (File.Exists(path) && IsImageFile(Path.GetExtension(path).ToLowerInvariant()))
@@ -12027,6 +12005,11 @@ public partial class MainWindow : Window
         if (IsAudioFile("." + ext))
         {
             return RenderItemVectorIcon(ItemVectorIconKind.Audio, size, displaySize);
+        }
+
+        if (IsVideoFile("." + ext))
+        {
+            return RenderItemVectorIcon(ItemVectorIconKind.Video, size, displaySize);
         }
 
         return RenderItemVectorIcon(ItemVectorIconKind.File, size, displaySize, FileExtensionLabel(ext));
