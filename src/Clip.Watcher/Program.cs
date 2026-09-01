@@ -861,17 +861,12 @@ internal sealed class WatcherSettingsProvider
     }
 }
 
-internal enum WatcherAppIconPreference
-{
-    Light,
-    Dark,
-}
-
 internal static class WatcherTrayIcon
 {
-    public static string IconPath(WatcherAppIconPreference preference, string baseDirectory)
+    // One icon, always the light tile. The palette is dark-only; the icon never was.
+    public static string IconPath(string baseDirectory)
     {
-        var fileName = preference == WatcherAppIconPreference.Dark ? "clip-tile-dark.ico" : "clip-tile-light.ico";
+        const string fileName = "clip-tile-light.ico";
         var path = Path.Combine(baseDirectory, "assets", "app-icons", fileName);
         if (File.Exists(path))
         {
@@ -881,15 +876,15 @@ internal static class WatcherTrayIcon
         return Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "assets", "app-icons", fileName));
     }
 
-    public static Icon? LoadOwnedIcon(WatcherAppIconPreference preference, string baseDirectory)
+    public static Icon? LoadOwnedIcon(string baseDirectory)
     {
-        var path = IconPath(preference, baseDirectory);
+        var path = IconPath(baseDirectory);
         return File.Exists(path) ? new Icon(path) : null;
     }
 
-    public static Icon LoadIcon(WatcherAppIconPreference preference, string baseDirectory)
+    public static Icon LoadIcon(string baseDirectory)
     {
-        return LoadOwnedIcon(preference, baseDirectory) ?? SystemIcons.Application;
+        return LoadOwnedIcon(baseDirectory) ?? SystemIcons.Application;
     }
 }
 
@@ -900,7 +895,6 @@ internal sealed class WatcherSettings
     public string? ClipboardFolderPath { get; init; }
     public int? HistoryLimit { get; init; } = 500;
     public long? MaxItemSizeBytes { get; init; } = 50L * 1024 * 1024;
-    public WatcherAppIconPreference AppIcon { get; init; } = WatcherAppIconPreference.Light;
     public string OpenHotkey { get; init; } = "Alt+V";
     public PasteFormatPreference DefaultPasteFormat { get; init; } = PasteFormatPreference.PlainText;
     public bool CapturePaused { get; init; }
@@ -944,7 +938,6 @@ internal sealed class WatcherSettings
                 ClipboardFolderPath = StringProperty(root, "ClipboardFolderPath"),
                 HistoryLimit = NullableIntProperty(root, "HistoryLimit", 500),
                 MaxItemSizeBytes = NullableLongProperty(root, "MaxItemSizeBytes", 50L * 1024 * 1024),
-                AppIcon = AppIconProperty(root),
                 OpenHotkey = HotkeyProperty(root) ?? "Alt+V",
                 DefaultPasteFormat = PasteFormatProperty(root),
                 CapturePaused = BoolProperty(root, "CapturePaused"),
@@ -955,24 +948,6 @@ internal sealed class WatcherSettings
         {
             return new WatcherSettings();
         }
-    }
-
-    private static WatcherAppIconPreference AppIconProperty(JsonElement root)
-    {
-        if (!root.TryGetProperty("AppIcon", out var value))
-        {
-            return WatcherAppIconPreference.Light;
-        }
-
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var numeric))
-        {
-            return numeric == (int)WatcherAppIconPreference.Dark ? WatcherAppIconPreference.Dark : WatcherAppIconPreference.Light;
-        }
-
-        return value.ValueKind == JsonValueKind.String &&
-            Enum.TryParse<WatcherAppIconPreference>(value.GetString(), ignoreCase: true, out var preference)
-                ? preference
-                : WatcherAppIconPreference.Light;
     }
 
     private static string? HotkeyProperty(JsonElement root)
@@ -1311,18 +1286,18 @@ internal sealed class ClipboardWatcherForm : Form
         }
 
         _trayIcon.Text = _settingsProvider.Current.CapturePaused ? "Clip — capture paused" : "Clip";
-        ApplyTrayIcon(_settingsProvider.Current.AppIcon);
+        ApplyTrayIcon();
         _trayIcon.ContextMenuStrip = CreateTrayMenu();
         _trayIcon.DoubleClick += (_, _) => RunTrayAction(WatcherTrayAction.OpenClip);
         _trayIcon.Visible = true;
     }
 
-    private void ApplyTrayIcon(WatcherAppIconPreference preference)
+    private void ApplyTrayIcon()
     {
         var oldIcon = _ownedTrayIcon;
         try
         {
-            var icon = WatcherTrayIcon.LoadOwnedIcon(preference, AppContext.BaseDirectory);
+            var icon = WatcherTrayIcon.LoadOwnedIcon(AppContext.BaseDirectory);
             if (icon is null)
             {
                 _trayIcon.Icon = SystemIcons.Application;
@@ -2042,7 +2017,7 @@ internal sealed class ClipboardWatcherForm : Form
     private void ApplySettingsChanges()
     {
         var settings = RefreshSettings();
-        ApplyTrayIcon(settings.AppIcon);
+        ApplyTrayIcon();
 
         var desiredHotkey = WatcherHotkey.OpenHotkey(settings.OpenHotkey);
         if (!_hotkeyRegistered)

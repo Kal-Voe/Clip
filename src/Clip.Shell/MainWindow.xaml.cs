@@ -7,7 +7,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -46,26 +45,15 @@ using WatcherStaticDocumentPreviewRenderer = Clip.Watcher.StaticDocumentPreviewR
 
 namespace Clip.Shell;
 
-internal enum ClipThemePreference
-{
-    System,
-    Light,
-    Dark,
-}
-
-internal enum AppIconPreference
-{
-    Light,
-    Dark,
-}
-
 internal sealed class ClipShellSettings
 {
     private const string ClipboardFolderName = "Clipboard History";
     private const string PreviousClipboardFolderName = "Clipboard";
 
-    public ClipThemePreference Theme { get; set; } = ClipThemePreference.System;
-    public AppIconPreference AppIcon { get; set; } = AppIconPreference.Light;
+    // No Theme or AppIcon property any more: the palette is dark-only and the app icon is the
+    // light tile, both unconditionally. Old settings.json files still carry "Theme"/"AppIcon"
+    // keys — System.Text.Json ignores properties it has nowhere to put, so those files still
+    // deserialize; the keys simply drop out of the file the next time Save writes it.
     public PasteFormatPreference DefaultPasteFormat { get; set; } = PasteFormatPreference.PlainText;
     public int? HistoryLimit { get; set; } = 500;
     public long? MaxItemSizeBytes { get; set; } = 50L * 1024 * 1024;
@@ -130,8 +118,6 @@ internal sealed class ClipShellSettings
 
     public void ResetToDefaults()
     {
-        Theme = ClipThemePreference.System;
-        AppIcon = AppIconPreference.Light;
         DefaultPasteFormat = PasteFormatPreference.PlainText;
         HistoryLimit = 500;
         MaxItemSizeBytes = 50L * 1024 * 1024;
@@ -217,7 +203,7 @@ internal sealed class ClipShellSettings
             // settings.json, because a truncated file loads as defaults and the save after
             // that wipes the user's real settings.
             Clip.Core.ClipSharedSettings.WriteSettingsFileAtomic(json);
-            ShellLog.Info($"settings saved path={SettingsPath} theme={Theme} appIcon={AppIcon} historyLimit={HistoryLimit?.ToString() ?? "Unlimited"} maxItemSize={ClipItemSizeLimit.MaxItemSizeLabel(MaxItemSizeBytes)} updateCheck={CheckForUpdatesOnStartup} autoInstall={InstallUpdatesAutomatically} clipboardFolder={EffectiveClipboardFolderPath()} openHotkey={Hotkeys.OpenClip} debugHotkey={Hotkeys.SaveDebugLog} excludedApps={Privacy.ExcludedApps.Count}");
+            ShellLog.Info($"settings saved path={SettingsPath} historyLimit={HistoryLimit?.ToString() ?? "Unlimited"} maxItemSize={ClipItemSizeLimit.MaxItemSizeLabel(MaxItemSizeBytes)} updateCheck={CheckForUpdatesOnStartup} autoInstall={InstallUpdatesAutomatically} clipboardFolder={EffectiveClipboardFolderPath()} openHotkey={Hotkeys.OpenClip} debugHotkey={Hotkeys.SaveDebugLog} excludedApps={Privacy.ExcludedApps.Count}");
         }
         catch (Exception ex)
         {
@@ -1102,6 +1088,12 @@ public partial class MainWindow : Window
     // WebView2 is an HWND with its own airspace — no WPF ZIndex can paint over it, so the browser
     // pane is hidden while the hosted settings overlay is up and restored when it closes.
     private bool _previewHiddenForSettings;
+
+    /// <summary>
+    /// The palette chrome hidden while Settings owns the window, remembered so closing Settings
+    /// puts back exactly what it took away and nothing else.
+    /// </summary>
+    private readonly List<UIElement> _paletteContentHiddenForSettings = new();
     private SettingsWindow? _prewarmedSettings;
     private bool _prewarmedSettingsReady;
     private bool _settingsPrewarmQueued;
@@ -1147,8 +1139,6 @@ public partial class MainWindow : Window
     /// </summary>
     internal static bool CapturingPreview { get; set; }
     internal ClipUpdateStatus LastUpdateStatus => _lastUpdateStatus;
-    internal AppIconPreference AppIconPreference => _settings.AppIcon;
-    internal event Action<AppIconPreference>? AppIconChanged;
     internal event Action<string>? UserNotificationRequested;
     internal event Action<string>? UpdateNotification;
 
@@ -1160,7 +1150,7 @@ public partial class MainWindow : Window
         RenderOptions.SetClearTypeHint(Shell, ClearTypeHint.Auto);
         FaviconCache.Warm();
         _htmlPreviewIdleTimer.Tick += OnHtmlPreviewIdle;
-        ApplyTheme(_settings.Theme, save: false);
+        ApplyTheme(save: false);
         UpdateFooterHotkeyHints();
         Opacity = 0;
         TitleText.Cursor = System.Windows.Input.Cursors.IBeam;
@@ -1179,6 +1169,10 @@ public partial class MainWindow : Window
         WireOutlineHover(FilesFilterShell, UpdateFilterVisuals);
         TitleText.MouseEnter += (_, _) => TitleText.Foreground = (WpfBrush)FindResource("Accent");
         TitleText.MouseLeave += (_, _) => TitleText.Foreground = (WpfBrush)FindResource("Text");
+        // Above the hosted Settings panel (z 1000). Settings actions raise toasts — "Startup
+        // enabled", "History cleared" — and Settings now fills the window, so without this the
+        // confirmation for what the user just clicked renders behind the page they clicked it on.
+        System.Windows.Controls.Panel.SetZIndex(Toast, 1001);
         _toastTimer.Tick += (_, _) =>
         {
             _toastTimer.Stop();
@@ -1232,7 +1226,7 @@ public partial class MainWindow : Window
             // The constructor's theme pass ran before the hwnd existed, so it resolved to the
             // opaque palette; now that the window is real, re-theme so the acrylic blur
             // (if enabled and supported) can actually take.
-            ApplyTheme(_settings.Theme, save: false);
+            ApplyTheme(save: false);
 
             // Landing on a monitor with a different scale makes Windows resize the palette after
             // the move, anchored wherever it decides — which un-centres what was just centred.
@@ -2518,7 +2512,7 @@ public partial class MainWindow : Window
         {
             // The compositor said no this time (driver reset, DWM restart). Re-theme opaque rather
             // than leave a see-through window with nothing behind it.
-            ApplyTheme(_settings.Theme, save: false);
+            ApplyTheme(save: false);
         }
     }
 
@@ -3979,119 +3973,6 @@ public partial class MainWindow : Window
         _deferredRenderIndex = 0;
         _deferredRenderReason = string.Empty;
         _deferredRenderWatch = null;
-    }
-
-    private void RefreshClipboardManagerTextTheme()
-    {
-        RefreshClipboardManagerVisualTheme(ItemsHost);
-        RefreshInfoPanelTheme(refreshIcon: false);
-        UpdateFilterVisuals();
-        TitleText.Foreground = (WpfBrush)FindResource("Text");
-        SubTitleText.Foreground = (WpfBrush)FindResource("Muted");
-        RefreshClipboardManagerIconTheme();
-    }
-
-    private void RefreshClipboardManagerVisualTheme(DependencyObject root)
-    {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            switch (child)
-            {
-                case TextBlock text:
-                    text.Foreground = IsPrimaryClipboardText(text) ? (WpfBrush)FindResource("Text") : (WpfBrush)FindResource("Muted");
-                    break;
-                case Border { Tag: ClipboardHistoryItem rowItem } row
-                    when rowItem.Id == _selected?.Id || _multiSelection.Contains(rowItem.Id):
-                    PaintRowSelection(row, rowItem.Id);
-                    break;
-            }
-
-            RefreshClipboardManagerVisualTheme(child);
-        }
-    }
-
-    private void RefreshClipboardManagerIconTheme()
-    {
-        RefreshClipboardManagerIcons(ItemsHost);
-        if (_selected is not null)
-        {
-            HeaderIcon.Source = IconFor(_selected, 96);
-            AttachFavicon(HeaderIcon, _selected);
-        }
-    }
-
-    private void RefreshClipboardManagerIcons(DependencyObject root)
-    {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is WpfImage image && FindRowItem(image) is { } imageItem)
-            {
-                // Rows are built with rich previews (thumbnails, real file icons); refreshing with
-                // the flat vector fallback swapped every icon for the generic glyph until restart.
-                // IconFor gives links their monogram, so the favicon has to be re-attached the same
-                // way row construction does or the refresh wipes it.
-                image.Source = IconFor(imageItem, 96);
-                AttachFavicon(image, imageItem);
-            }
-
-            RefreshClipboardManagerIcons(child);
-        }
-    }
-
-    private void RefreshInfoPanelTheme(bool refreshIcon = true)
-    {
-        RefreshInfoPanelTheme(InfoHost);
-        if (refreshIcon && _selected is not null)
-        {
-            HeaderIcon.Source = IconFor(_selected, 96);
-            AttachFavicon(HeaderIcon, _selected);
-        }
-    }
-
-    private void RefreshInfoPanelTheme(DependencyObject root)
-    {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            switch (child)
-            {
-                case TextBlock text:
-                    text.Foreground = (WpfBrush)FindResource("Muted2");
-                    break;
-                case WpfTextBox box:
-                    box.Foreground = (WpfBrush)FindResource("Text");
-                    box.CaretBrush = (WpfBrush)FindResource("TextCursor");
-                    break;
-                case Border border when border.Height == 1:
-                    border.Background = (WpfBrush)FindResource("Line");
-                    break;
-            }
-
-            RefreshInfoPanelTheme(child);
-        }
-    }
-
-    private static ClipboardHistoryItem? FindRowItem(DependencyObject child)
-    {
-        var current = child;
-        while (VisualTreeHelper.GetParent(current) is { } parent)
-        {
-            if (parent is Border { Tag: ClipboardHistoryItem item })
-            {
-                return item;
-            }
-
-            current = parent;
-        }
-
-        return null;
-    }
-
-    private static bool IsPrimaryClipboardText(TextBlock text)
-    {
-        return text.FontWeight == FontWeights.SemiBold || text.FontSize >= 13;
     }
 
     /// <summary>
@@ -9592,7 +9473,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private SettingsWindow CreateSettingsWindow() => new(_settings, _lastUpdateStatus, ApplyTheme, RefreshClipboardManagerTextTheme, ApplyAppIcon, ApplyRunAtStartup, ApplyHistoryLimit, ApplyMaxItemSize, ApplyUpdateSettings, CheckForUpdatesFromSettings, InstallUpdateAsync, OpenDataFolder, OpenDebugLog, ClearHistory, ExportHistory, RestoreHistory, ChangeClipboardFolder, ResetClipboardFolder, ApplyHotkeys, ApplyPrivacy, ApplyDefaultPasteFormat, ApplyExtractTextFromImages, ApplySourceAppInList, ResetAllSettings, CurrentSettingsPalette)
+    private SettingsWindow CreateSettingsWindow() => new(_settings, _lastUpdateStatus, ApplyTheme, ApplyRunAtStartup, ApplyHistoryLimit, ApplyMaxItemSize, ApplyUpdateSettings, CheckForUpdatesFromSettings, InstallUpdateAsync, OpenDataFolder, OpenDebugLog, ClearHistory, ExportHistory, RestoreHistory, ChangeClipboardFolder, ResetClipboardFolder, ApplyHotkeys, ApplyPrivacy, ApplyDefaultPasteFormat, ApplyExtractTextFromImages, ApplySourceAppInList, ResetAllSettings, CurrentSettingsPalette)
     {
         Owner = this,
     };
@@ -9640,6 +9521,11 @@ public partial class MainWindow : Window
             _previewHiddenForSettings = true;
         }
 
+        // Settings takes the window over rather than floating on it, so the search box, the list,
+        // the preview and the footer go away while it is up. _settingsOverlay is already assigned,
+        // which is what keeps this from hiding the panel it is about to show.
+        HidePaletteContentForSettings();
+
         if (!ReferenceEquals(overlay.Parent, host))
         {
             host.Children.Add(overlay);
@@ -9660,19 +9546,26 @@ public partial class MainWindow : Window
 
     private Border CreateHostedSettingsOverlay(SettingsWindow settings)
     {
+        // Settings fills the palette instead of sitting on it as a 720x500 card, so the panel is
+        // stretched rather than sized and centred, and it drops its own rounded border: the Shell's
+        // corner radius is the silhouette now, and a second rounded edge inside it read as a card.
         var content = settings.DetachForHost(CloseHostedSettings);
-        content.Width = 720;
-        content.Height = 500;
-        content.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
-        content.VerticalAlignment = VerticalAlignment.Center;
+        content.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+        content.VerticalAlignment = VerticalAlignment.Stretch;
 
         var overlay = new Border
         {
-            Background = WpfBrushes.Transparent,
+            // The overlay is the sheet the panel sits on, and it follows the palette's own rule:
+            // with the glass on the acrylic tint IS the sheet, so this paints only #01000000 —
+            // one step of alpha, invisible over the blur. Not Transparent: the window is layered
+            // for the acrylic and Windows delivers no click at all where the layer's alpha is
+            // zero, which with the palette's own painting hidden would leave Settings
+            // click-through and the window un-draggable. Glass off, it paints the real Bg.
+            Background = _backdropActive ? HostedSettingsGlassSheet : (WpfBrush)FindResource("Bg"),
             Child = content,
             Focusable = true,
         };
-        Grid.SetRowSpan(overlay, 4);
+        Grid.SetRowSpan(overlay, 3);
         System.Windows.Controls.Panel.SetZIndex(overlay, 1000);
         overlay.KeyDown += (_, e) =>
         {
@@ -9683,6 +9576,76 @@ public partial class MainWindow : Window
             }
         };
         return overlay;
+    }
+
+    /// <summary>
+    /// Alpha 1 of 255 — the same trick the top bar's drag strip uses. Invisible over the acrylic,
+    /// and enough to make the pixels belong to the layered window so clicks and drags land.
+    /// </summary>
+    private static readonly WpfBrush HostedSettingsGlassSheet = CreateHostedSettingsGlassSheet();
+
+    private static WpfBrush CreateHostedSettingsGlassSheet()
+    {
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x01, 0, 0, 0));
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>
+    /// Hides the palette's own chrome — search, list, preview, footer — while Settings owns the
+    /// window. Hidden rather than Collapsed: a collapsed element skips measure and arrange, and
+    /// the palette has to come back with the same scroll offsets and the same rendered rows it
+    /// had when Settings opened. Only what is on screen is touched, so the toast and the
+    /// expanded-image overlay are left as they are rather than "restored" into view later.
+    /// </summary>
+    private void HidePaletteContentForSettings()
+    {
+        if (Shell.Child is Grid host)
+        {
+            // Toast is deliberately not in the skip list by name — it is normally collapsed, so it
+            // is skipped by the Visible test below, and its own z-index puts it over the panel.
+            HidePaletteContent(host, _settingsOverlay, _prewarmedSettingsOverlay, _paletteContentHiddenForSettings);
+        }
+    }
+
+    internal static void HidePaletteContent(
+        System.Windows.Controls.Panel host,
+        UIElement? settingsOverlay,
+        UIElement? prewarmedOverlay,
+        List<UIElement> hidden)
+    {
+        hidden.Clear();
+        foreach (UIElement child in host.Children)
+        {
+            if (ReferenceEquals(child, settingsOverlay) ||
+                ReferenceEquals(child, prewarmedOverlay) ||
+                child.Visibility != Visibility.Visible)
+            {
+                continue;
+            }
+
+            hidden.Add(child);
+            child.Visibility = Visibility.Hidden;
+        }
+    }
+
+    private void RestorePaletteContentAfterSettings() =>
+        RestorePaletteContent(_paletteContentHiddenForSettings);
+
+    internal static void RestorePaletteContent(List<UIElement> hidden)
+    {
+        foreach (var child in hidden)
+        {
+            // Only un-hide what is still hidden. Something can decide to collapse itself while
+            // Settings is up — a toast timing out, an expanded image being closed — and blindly
+            // restoring it to Visible would strand it on screen for good.
+            if (child.Visibility == Visibility.Hidden)
+            {
+                child.Visibility = Visibility.Visible;
+            }
+        }
+
+        hidden.Clear();
     }
 
     private void CloseHostedSettings() => CloseHostedSettings(logClose: true);
@@ -9704,6 +9667,11 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        // Back to the palette exactly as it was: nothing here resets the search text, the
+        // selection or the scroll, and ConcealPalette (which does) only runs on the tray path
+        // below, where the palette is going away rather than being returned to.
+        RestorePaletteContentAfterSettings();
 
         if (_previewHiddenForSettings)
         {
@@ -9742,8 +9710,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ApplyAppIcon(AppIconPreference preference) => ApplyAppIcon(preference, save: true);
-
     private SettingsPalette CurrentSettingsPalette() => new(
         (WpfBrush)FindResource("Bg"),
         (WpfBrush)FindResource("Surface"),
@@ -9758,23 +9724,6 @@ public partial class MainWindow : Window
         (WpfBrush)FindResource("AccentSoft"),
         (WpfBrush)FindResource("Selected"),
         (WpfBrush)FindResource("SelectedBorder"));
-
-    private void ApplyAppIcon(AppIconPreference preference, bool save)
-    {
-        _settings.AppIcon = preference;
-        ApplyWindowTitleIcon(preference);
-        var iconPath = AppIconPath(preference);
-
-        if (save)
-        {
-            _settings.Save();
-            AppIconChanged?.Invoke(preference);
-            UpdateInstalledShortcutIcons(iconPath);
-            ShowToast($"Icon set to {preference}");
-        }
-
-        ShellLog.Info($"app icon applied preference={preference} path={iconPath}");
-    }
 
     private void ApplyRunAtStartup(bool enabled)
     {
@@ -10179,8 +10128,8 @@ public partial class MainWindow : Window
         _settings.ResetToDefaults();
         _settings.Save();
         ApplyRunAtStartup(StartupRegistration.DefaultEnabled);
-        ApplyTheme(_settings.Theme, save: false);
-        ApplyAppIcon(_settings.AppIcon, save: false);
+        ApplyTheme(save: false);
+        ApplyWindowTitleIcon();
         _store.SetContentRootPath(_settings.EffectiveClipboardFolderPath());
         ReRegisterHotkeys("settings-reset");
         UpdateFooterHotkeyHints();
@@ -10229,57 +10178,56 @@ public partial class MainWindow : Window
         EnsureHotkeyRegistered(reason);
     }
 
-    private void ApplyTheme(ClipThemePreference preference) => ApplyTheme(preference, save: true);
+    private void ApplyTheme() => ApplyTheme(save: true);
 
-    private void ApplyTheme(ClipThemePreference preference, bool save)
+    /// <summary>
+    /// Paints the one palette Clip has. There is no light theme and no preference to branch on any
+    /// more — the light hex values were deleted rather than switched off, so what is written here
+    /// is what ships. It is still re-run rather than done once: the acrylic has to be re-applied
+    /// after the hwnd exists, after a compositor refusal, and whenever the Translucent background
+    /// setting is toggled, and every brush's alpha depends on whether the glass actually took.
+    /// </summary>
+    private void ApplyTheme(bool save)
     {
         ClearPrewarmedHostedSettings();
 
-        // The generated preview pages bake the theme's colours in, so a page rendered under the old
-        // theme must not be reused after a switch.
+        // The generated preview pages bake the theme's colours in, so a page rendered before the
+        // glass toggled must not be reused after it.
         _previewItemId = null;
         _previewSourceStamp = null;
 
-        _settings.Theme = preference;
-        var useDark = preference switch
-        {
-            ClipThemePreference.Light => false,
-            ClipThemePreference.Dark => true,
-            _ => IsWindowsDarkMode(),
-        };
-
         // Backdrop first: SetBrush below alpha-blends the zone brushes only when the acrylic
         // actually took, so a failed apply degrades to the plain opaque palette instead of a
-        // see-through window. It also needs the new Bg before Bg is set, hence the local.
-        var bgHex = useDark ? "#1A1A1A" : "#F7F7F7";
+        // see-through window. It also needs the Bg hex before Bg is set, hence the local.
+        const string bgHex = "#1A1A1A";
         ApplyBackdropPreference(bgHex);
 
         SetBrush("Bg", bgHex);
-        SetBrush("Surface", useDark ? "#212121" : "#FFFFFF");
-        SetBrush("Surface2", useDark ? "#272727" : "#EDEDED");
-        SetBrush("Surface3", useDark ? "#323232" : "#DCDCDC");
-        SetBrush("Line", useDark ? "#494949" : "#B8B8B8");
-        SetBrush("Line2", useDark ? "#5A5A5A" : "#989898");
-        SetBrush("Text", useDark ? "#F1F1F1" : "#1A1A1A");
+        SetBrush("Surface", "#212121");
+        SetBrush("Surface2", "#272727");
+        SetBrush("Surface3", "#323232");
+        SetBrush("Line", "#494949");
+        SetBrush("Line2", "#5A5A5A");
+        SetBrush("Text", "#F1F1F1");
         // Muted carries the 11-12px labels (INFORMATION, the footer captions, the search
         // placeholder) and it is the first thing to go thin once there is a real blurred desktop
         // under it instead of a flat sheet. Raised here rather than by thickening the glass:
         // Muted is opaque and independent of the tint, so this buys legibility without buying back
         // the opacity the whole change exists to remove.
-        SetBrush("Muted", useDark ? "#A3A3A3" : "#585858");
-        SetBrush("Muted2", useDark ? "#BBBBBB" : "#474747");
-        SetBrush("Muted3", useDark ? "#777777" : "#6A6A6A");
+        SetBrush("Muted", "#A3A3A3");
+        SetBrush("Muted2", "#BBBBBB");
+        SetBrush("Muted3", "#777777");
         // Raycast palette: fixed brand red (#FF6363) used sparingly, never the Windows accent.
-        SetBrush("Accent", useDark ? "#FF6363" : "#D64545");
-        SetBrush("TextCursor", useDark ? "#FF6363" : "#D64545");
+        SetBrush("Accent", "#FF6363");
+        SetBrush("TextCursor", "#FF6363");
         // Selection/hover chrome is deliberately neutral (no accent tint): accent-colored fills and
         // 1px accent borders everywhere read as a "glow". The accent survives only in Accent
         // (focus ring, toggles), TextCursor, and TextSelection.
-        SetBrush("AccentSoft", useDark ? "#2D2D2D" : "#E7E7E7");
-        SetBrush("Selected", useDark ? "#373737" : "#D9D9D9");
-        SetBrush("SelectedBorder", useDark ? "#525252" : "#ACACAC");
-        SetBrush("TextSelection", useDark ? "#FF6363" : "#D64545");
-        SetBrush("Danger", useDark ? "#D56B5D" : "#B94A3D");
+        SetBrush("AccentSoft", "#2D2D2D");
+        SetBrush("Selected", "#373737");
+        SetBrush("SelectedBorder", "#525252");
+        SetBrush("TextSelection", "#FF6363");
+        SetBrush("Danger", "#D56B5D");
         // The window itself never paints: it is layered, so an opaque window background would
         // square off the Shell's rounded corners whether the glass is on or not. The Shell is the
         // silhouette. With the glass on it paints nothing at all — the acrylic tint IS the sheet
@@ -10287,8 +10235,8 @@ public partial class MainWindow : Window
         Shell.Background = _backdropActive ? WpfBrushes.Transparent : (WpfBrush)FindResource("Bg");
         _setHtmlPreviewBackground?.Invoke(ToDrawingColor((SolidColorBrush)FindResource("Surface")));
 
-        // Browser-backed previews bake theme colors into their generated pages, so a theme
-        // change has to rebuild the visible preview rather than leave it in the old palette.
+        // Browser-backed previews bake the palette colors into their generated pages, so a
+        // re-theme has to rebuild the visible preview rather than leave it in the old alphas.
         if (_selected is not null && IsVisible)
         {
             RenderPreview(_selected);
@@ -10320,7 +10268,7 @@ public partial class MainWindow : Window
             RefreshChromeIcons();
         }
 
-        ShellLog.Info($"theme applied preference={preference} dark={useDark}");
+        ShellLog.Info($"theme applied glass={_backdropActive}");
 
         if (save)
         {
@@ -10336,13 +10284,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ApplyWindowTitleIcon(AppIconPreference preference)
+    private void ApplyWindowTitleIcon()
     {
-        // The palette has no title bar, so the chosen icon lands on the window itself
+        // The palette has no title bar, so the app icon lands on the window itself
         // (alt-tab and taskbar) rather than on an in-window header.
-        Icon = RenderAppTileIcon(preference);
+        Icon = RenderAppTileIcon();
         _appHeaderIconReady = true;
-        ShellLog.Info($"window icon applied icon={preference}");
+        ShellLog.Info("window icon applied");
     }
 
     private void EnsureAppHeaderIcon()
@@ -10352,7 +10300,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        ApplyWindowTitleIcon(_settings.AppIcon);
+        ApplyWindowTitleIcon();
     }
 
     private void RefreshChromeIcons()
@@ -10475,9 +10423,13 @@ public partial class MainWindow : Window
         return image;
     }
 
-    internal static ImageSource RenderAppTileIcon(AppIconPreference preference)
+    /// <summary>
+    /// The light paperclip tile — the app's one icon. The palette is dark, the icon is light: they
+    /// were never the same setting, and only this one survives.
+    /// </summary>
+    internal static ImageSource RenderAppTileIcon()
     {
-        var cacheKey = $"app-tile|{preference}";
+        const string cacheKey = "app-tile";
         lock (SvgCacheGate)
         {
             if (SvgImageCache.TryGetValue(cacheKey, out var cached))
@@ -10486,13 +10438,8 @@ public partial class MainWindow : Window
             }
         }
 
-        var dark = preference == AppIconPreference.Dark;
-        var background = new SolidColorBrush(dark
-            ? System.Windows.Media.Color.FromRgb(0x21, 0x1F, 0x1C)
-            : System.Windows.Media.Color.FromRgb(0xF4, 0xF0, 0xE6));
-        var strokeBrush = new SolidColorBrush(dark
-            ? System.Windows.Media.Color.FromRgb(0xF4, 0xF0, 0xE6)
-            : System.Windows.Media.Color.FromRgb(0x1A, 0x18, 0x16));
+        var background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF4, 0xF0, 0xE6));
+        var strokeBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1A, 0x18, 0x16));
         background.Freeze();
         strokeBrush.Freeze();
 
@@ -10708,31 +10655,6 @@ public partial class MainWindow : Window
         return "#F2EFE9";
     }
 
-    internal static bool IsWindowsDarkMode()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            return key?.GetValue("AppsUseLightTheme") is int value && value == 0;
-        }
-        catch
-        {
-            return true;
-        }
-    }
-
-    internal static bool IsLightBackground(WpfBrush brush)
-    {
-        if (brush is not SolidColorBrush solid)
-        {
-            return false;
-        }
-
-        var color = solid.Color;
-        var brightness = (color.R * 0.299) + (color.G * 0.587) + (color.B * 0.114);
-        return brightness > 150;
-    }
-
     // Flattened to opaque because both callers feed WebView2's DefaultBackgroundColor, which
     // accepts only fully transparent or fully opaque — the acrylic theme's semi-transparent
     // Surface (alpha 0xCC) made the setter throw ArgumentException, which faulted the WebView2
@@ -10740,49 +10662,6 @@ public partial class MainWindow : Window
     // loads paint their own opaque Surface anyway, so nothing is lost visually.
     private static System.Drawing.Color ToDrawingColor(SolidColorBrush brush) =>
         System.Drawing.Color.FromArgb(255, brush.Color.R, brush.Color.G, brush.Color.B);
-
-    internal static ClipThemePreference NextThemeTogglePreference(ClipThemePreference current, bool systemIsDark)
-    {
-        var currentlyDark = current switch
-        {
-            ClipThemePreference.Dark => true,
-            ClipThemePreference.Light => false,
-            _ => systemIsDark,
-        };
-
-        return currentlyDark ? ClipThemePreference.Light : ClipThemePreference.Dark;
-    }
-
-    private static void UpdateInstalledShortcutIcons(string iconPath)
-    {
-        try
-        {
-            var shortcuts = new[]
-            {
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Clip.lnk"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Clip.lnk"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Clip", "Clip.lnk"),
-            };
-
-            var shellType = Type.GetTypeFromProgID("WScript.Shell");
-            if (shellType is null)
-            {
-                return;
-            }
-
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            foreach (var shortcutPath in shortcuts.Where(File.Exists))
-            {
-                dynamic shortcut = shell.CreateShortcut(shortcutPath);
-                shortcut.IconLocation = iconPath;
-                shortcut.Save();
-            }
-        }
-        catch (Exception ex)
-        {
-            ShellLog.Error(ex, "shortcut icon update failed");
-        }
-    }
 
     private void OnListWheel(object sender, MouseWheelEventArgs e)
     {
@@ -10866,7 +10745,11 @@ public partial class MainWindow : Window
             e.GetPosition(RootGrid).Y,
             SearchRowDef.ActualHeight,
             RootGrid.ActualHeight,
-            FooterRowDef.ActualHeight,
+            // No bottom grab handle while Settings owns the window: there is no footer bar down
+            // there any more, just the bottom of the settings page — and the content scrollbar's
+            // thumb, which a window drag would steal every time it sits near the bottom. The top
+            // band stays a handle because the settings header lines up with it.
+            _settingsOverlay is null ? FooterRowDef.ActualHeight : 0,
             IsWithin(e.OriginalSource as DependencyObject, SearchShell),
             SearchBox.Text.Length);
 
@@ -11192,6 +11075,18 @@ public partial class MainWindow : Window
         }
         else if (MatchesHotkey(e, _settings.Hotkeys.CloseClip))
         {
+            // Escape closes Settings, not the palette. The overlay has its own handler for when it
+            // holds focus, but focus can sit outside it (a hosted popup closing, the window itself
+            // after the palette's own controls went hidden), and from there this handler would
+            // conceal the whole palette out from under an open Settings. One guard, at the point
+            // every escape route converges.
+            if (_settingsOverlay is not null)
+            {
+                CloseHostedSettings();
+                e.Handled = true;
+                return;
+            }
+
             if (ExpandedImageOverlay.Visibility == Visibility.Visible)
             {
                 CloseExpandedImage();
@@ -11918,9 +11813,9 @@ public partial class MainWindow : Window
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "assets", "icons", fileName));
     }
 
-    internal static string AppIconPath(AppIconPreference preference)
+    internal static string AppIconPath()
     {
-        var fileName = preference == AppIconPreference.Dark ? "clip-tile-dark.ico" : "clip-tile-light.ico";
+        const string fileName = "clip-tile-light.ico";
         var path = Path.Combine(AppContext.BaseDirectory, "assets", "app-icons", fileName);
         if (File.Exists(path)) return path;
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "assets", "app-icons", fileName));
@@ -13733,9 +13628,7 @@ internal sealed class SettingsWindow : Window
     private readonly Dictionary<string, WpfButton> _nav = new(StringComparer.OrdinalIgnoreCase);
     private readonly ClipShellSettings _settings;
     private ClipUpdateStatus _updateStatus;
-    private readonly Action<ClipThemePreference> _applyTheme;
-    private readonly Action _refreshClipboardManagerTextTheme;
-    private readonly Action<AppIconPreference> _applyAppIcon;
+    private readonly Action _applyTheme;
     private readonly Action<bool> _applyRunAtStartup;
     private readonly Action<int?> _applyHistoryLimit;
     private readonly Action<long?> _applyMaxItemSize;
@@ -13756,17 +13649,8 @@ internal sealed class SettingsWindow : Window
     private readonly Action<bool> _applySourceAppInList;
     private readonly Action _resetAllSettings;
     private readonly Func<SettingsPalette> _paletteProvider;
-    private readonly System.Windows.Threading.DispatcherTimer _themeApplyTimer = new(System.Windows.Threading.DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(16) };
-    private SettingsPalette? _paletteOverride;
-    private ThemeMorphIcon? _themeIcon;
     private Border? _root;
-    private Grid? _header;
-    private Border? _headerBorder;
-    private TextBlock? _headerTitle;
-    private WpfButton? _closeButton;
-    private Border? _sidebarBorder;
-    private StackPanel? _sidebar;
-    private ScrollViewer? _contentScroll;
+    private Grid? _shell;
     private WpfBrush _bg = WpfBrushes.Transparent;
     private WpfBrush _surface = WpfBrushes.Transparent;
     private WpfBrush _surface2 = WpfBrushes.Transparent;
@@ -13783,13 +13667,11 @@ internal sealed class SettingsWindow : Window
     private Action? _hostClose;
     private string _currentPage = "General";
 
-    public SettingsWindow(ClipShellSettings settings, ClipUpdateStatus updateStatus, Action<ClipThemePreference> applyTheme, Action refreshClipboardManagerTextTheme, Action<AppIconPreference> applyAppIcon, Action<bool> applyRunAtStartup, Action<int?> applyHistoryLimit, Action<long?> applyMaxItemSize, Action<bool, bool> applyUpdateSettings, Action<Action<ClipUpdateStatus>> checkForUpdates, Func<ClipUpdateStatus, Task> installUpdate, Action openDataFolder, Action openDebugLog, Action<bool> clearHistory, Action<string> exportHistory, Action<string> restoreHistory, Action<string> changeClipboardFolder, Action resetClipboardFolder, Action<ClipHotkeySettings> applyHotkeys, Action<ClipPrivacySettings> applyPrivacy, Action<PasteFormatPreference> applyDefaultPasteFormat, Action<bool> applyExtractTextFromImages, Action<bool> applySourceAppInList, Action resetAllSettings, Func<SettingsPalette> paletteProvider)
+    public SettingsWindow(ClipShellSettings settings, ClipUpdateStatus updateStatus, Action applyTheme, Action<bool> applyRunAtStartup, Action<int?> applyHistoryLimit, Action<long?> applyMaxItemSize, Action<bool, bool> applyUpdateSettings, Action<Action<ClipUpdateStatus>> checkForUpdates, Func<ClipUpdateStatus, Task> installUpdate, Action openDataFolder, Action openDebugLog, Action<bool> clearHistory, Action<string> exportHistory, Action<string> restoreHistory, Action<string> changeClipboardFolder, Action resetClipboardFolder, Action<ClipHotkeySettings> applyHotkeys, Action<ClipPrivacySettings> applyPrivacy, Action<PasteFormatPreference> applyDefaultPasteFormat, Action<bool> applyExtractTextFromImages, Action<bool> applySourceAppInList, Action resetAllSettings, Func<SettingsPalette> paletteProvider)
     {
         _settings = settings;
         _updateStatus = updateStatus;
         _applyTheme = applyTheme;
-        _refreshClipboardManagerTextTheme = refreshClipboardManagerTextTheme;
-        _applyAppIcon = applyAppIcon;
         _applyRunAtStartup = applyRunAtStartup;
         _applyHistoryLimit = applyHistoryLimit;
         _applyMaxItemSize = applyMaxItemSize;
@@ -13811,7 +13693,6 @@ internal sealed class SettingsWindow : Window
         _resetAllSettings = resetAllSettings;
         _paletteProvider = paletteProvider;
         ApplyPalette(_paletteProvider());
-        _themeApplyTimer.Tick += (_, _) => ApplyPendingTheme();
 
         Title = "Clip Settings";
         Width = 720;
@@ -13840,16 +13721,17 @@ internal sealed class SettingsWindow : Window
         };
         _root = root;
         var shell = new Grid();
+        _shell = shell;
         shell.RowDefinitions.Add(new RowDefinition { Height = new GridLength(54) });
         shell.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         // A Border does not clip its child to its rounded corners, so the square header and body
-        // painted over the 1px border along the curves. The panel is a fixed 720x500 everywhere
-        // (NoResize window, fixed-size host), so a static clip matching the inner rounding holds.
+        // painted over the 1px border along the curves. As a standalone window the panel is a
+        // fixed 720x500, so a static clip matching the inner rounding holds. DetachForHost drops
+        // both the rounding and this clip — hosted in the palette there is no card to round.
         shell.Clip = new RectangleGeometry(new Rect(0, 0, 718, 498), 13, 13);
         root.Child = shell;
 
         var header = new Grid { Background = _surface2 };
-        _header = header;
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.MouseLeftButtonDown += (_, e) =>
@@ -13868,7 +13750,6 @@ internal sealed class SettingsWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(18, 0, 0, 0),
         };
-        _headerTitle = headerTitle;
         header.Children.Add(headerTitle);
         var close = new WpfButton
         {
@@ -13882,7 +13763,6 @@ internal sealed class SettingsWindow : Window
             Margin = new Thickness(0, 0, 14, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        _closeButton = close;
         close.MouseEnter += (_, _) =>
         {
             close.Background = _accentSoft;
@@ -13904,7 +13784,6 @@ internal sealed class SettingsWindow : Window
             BorderBrush = _line,
             BorderThickness = new Thickness(0, 0, 0, 1),
         };
-        _headerBorder = headerBorder;
         shell.Children.Add(headerBorder);
 
         var body = new Grid();
@@ -13918,7 +13797,6 @@ internal sealed class SettingsWindow : Window
             Background = _surface2,
             Margin = new Thickness(12, 14, 12, 12),
         };
-        _sidebar = sidebar;
         foreach (var page in new[] { "General", "History", "Shortcuts", "Privacy", "App Overrides", "Appearance", "About" })
         {
             var button = NavButton(page);
@@ -13935,7 +13813,6 @@ internal sealed class SettingsWindow : Window
             BorderThickness = new Thickness(0, 0, 1, 0),
             Child = sidebar,
         };
-        _sidebarBorder = sidebarBorder;
         body.Children.Add(sidebarBorder);
 
         _content.Background = _surface;
@@ -13947,7 +13824,6 @@ internal sealed class SettingsWindow : Window
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
-        _contentScroll = contentScroll;
         Grid.SetColumn(contentScroll, 1);
         body.Children.Add(contentScroll);
 
@@ -13955,12 +13831,32 @@ internal sealed class SettingsWindow : Window
         ShowPage("General");
     }
 
+    /// <summary>
+    /// Hands the panel's content to the palette to host in place of its own. Hosted, the panel is
+    /// not a card floating over the palette any more — it IS the window's content, so it gives up
+    /// the three things that made it read as a card: its own rounded corner, its 1px border, and
+    /// the sheet it painted behind itself (the palette's Shell, or the acrylic, is the sheet now).
+    /// The fixed 718x498 clip goes too — it existed only because the panel was a fixed 720x500,
+    /// and it would slice the corners off content laid out at the palette's size.
+    /// </summary>
     public FrameworkElement DetachForHost(Action close)
     {
         _hostClose = close;
         if (Content is not FrameworkElement content)
         {
             throw new InvalidOperationException("Settings content is not hostable.");
+        }
+
+        if (_root is not null)
+        {
+            _root.Background = WpfBrushes.Transparent;
+            _root.BorderThickness = new Thickness(0);
+            _root.CornerRadius = new CornerRadius(0);
+        }
+
+        if (_shell is not null)
+        {
+            _shell.Clip = null;
         }
 
         Content = null;
@@ -14083,62 +13979,6 @@ internal sealed class SettingsWindow : Window
         _selectedBorder = palette.SelectedBorder;
     }
 
-    private void RefreshTheme(bool rebuildPage = true)
-    {
-        ApplyPalette(_paletteOverride ?? _paletteProvider());
-        Background = PaletteBackdrop.Opaque(_bg);
-        if (_root is not null)
-        {
-            _root.Background = _bg;
-            _root.BorderBrush = _line;
-        }
-
-        if (_header is not null)
-        {
-            _header.Background = _surface2;
-        }
-
-        if (_headerBorder is not null)
-        {
-            _headerBorder.BorderBrush = _line;
-        }
-
-        if (_headerTitle is not null)
-        {
-            _headerTitle.Foreground = _text;
-        }
-
-        if (_closeButton is not null && !_closeButton.IsMouseOver)
-        {
-            _closeButton.Background = WpfBrushes.Transparent;
-            _closeButton.Foreground = _muted;
-        }
-
-        if (_sidebar is not null)
-        {
-            _sidebar.Background = _surface2;
-        }
-
-        if (_sidebarBorder is not null)
-        {
-            _sidebarBorder.Background = _surface2;
-            _sidebarBorder.BorderBrush = _line;
-        }
-
-        _content.Background = _surface;
-        if (_contentScroll is not null)
-        {
-            _contentScroll.Background = _surface;
-        }
-
-        RefreshNavigationTheme();
-
-        if (rebuildPage)
-        {
-            ShowPage(_currentPage);
-        }
-    }
-
     private void ShowPage(string page)
     {
         _currentPage = page;
@@ -14161,9 +14001,7 @@ internal sealed class SettingsWindow : Window
 
         if (string.Equals(page, "Appearance", StringComparison.OrdinalIgnoreCase))
         {
-            panel.Children.Add(ThemeRow());
             panel.Children.Add(TranslucentBackgroundRow());
-            panel.Children.Add(AppIconRow());
         }
 
         if (string.Equals(page, "History", StringComparison.OrdinalIgnoreCase))
@@ -14406,7 +14244,7 @@ internal sealed class SettingsWindow : Window
             "Shortcuts" => "Keyboard controls for Clip",
             "Privacy" => "Apps excluded from clipboard history",
             "App Overrides" => "Custom hotkeys per app for Clip actions",
-            "Appearance" => "Theme and icon preferences",
+            "Appearance" => "How the palette is painted",
             "About" => "Version, updates, and support files",
             _ => string.Empty,
         };
@@ -15384,23 +15222,6 @@ internal sealed class SettingsWindow : Window
         return toggle;
     }
 
-    private Border ThemeRow()
-    {
-        return ControlRow(
-            "Theme",
-            "Choose System, Light, or Dark.",
-            ThemeToggleDropdown(),
-            minHeight: 66);
-    }
-
-    private Border AppIconRow()
-    {
-        return ControlRow(
-            "App icon",
-            "Choose Light or Dark.",
-            AppIconPicker());
-    }
-
     private Border TranslucentBackgroundRow()
     {
         var supported = PaletteBackdrop.IsSupported();
@@ -15422,458 +15243,11 @@ internal sealed class SettingsWindow : Window
                 _settings.TranslucentBackground = enabled;
                 // Re-applying the theme is what applies or removes the backdrop and swaps the
                 // brushes between the glass and opaque palettes — and it saves the setting.
-                _applyTheme(_settings.Theme);
+                _applyTheme();
             });
         dropdown.IsEnabled = supported;
 
         return ControlRow("Translucent background", description, dropdown);
-    }
-
-    private FrameworkElement ThemeToggleDropdown()
-    {
-        var host = new Grid { Width = 74, Height = 30 };
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
-
-        var toggle = AnimatedThemeToggle(_settings.Theme);
-        var themeIcon = (ThemeMorphIcon)toggle.Tag;
-        Grid.SetColumn(toggle, 0);
-        host.Children.Add(toggle);
-
-        var arrow = new WpfButton
-        {
-            Width = 28,
-            Height = 30,
-            Padding = new Thickness(0),
-            Background = _surface2,
-            BorderBrush = _line,
-            BorderThickness = new Thickness(1),
-            Content = new WpfImage { Source = DropdownIcon(), Width = 11, Height = 11, Tag = DropdownIconTag },
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Template = SubtleSettingsButtonTemplate(),
-            FocusVisualStyle = null,
-        };
-        arrow.MouseEnter += (_, _) => arrow.Background = _accentSoft;
-        arrow.MouseLeave += (_, _) => arrow.Background = _surface2;
-        Grid.SetColumn(arrow, 1);
-        host.Children.Add(arrow);
-
-        var optionHost = new StackPanel();
-        var popup = new Popup
-        {
-            PlacementTarget = host,
-            Placement = PlacementMode.Bottom,
-            StaysOpen = false,
-            AllowsTransparency = true,
-            Child = new Border
-            {
-                Background = PaletteBackdrop.Opaque(_surface),
-                BorderBrush = _line,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(4),
-                MinWidth = 112,
-                Child = optionHost,
-            },
-        };
-
-        foreach (var item in new[] { "System", "Light", "Dark" })
-        {
-            optionHost.Children.Add(ThemeOptionRow(item, selected =>
-            {
-                ApplyThemeThroughToggle(selected, themeIcon);
-                var closeTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
-                closeTimer.Tick += (_, _) =>
-                {
-                    closeTimer.Stop();
-                    popup.IsOpen = false;
-                };
-                closeTimer.Start();
-            }));
-        }
-
-        arrow.Click += (_, _) => popup.IsOpen = true;
-        return host;
-    }
-
-    private WpfButton AnimatedThemeToggle(ClipThemePreference current)
-    {
-        var dark = current switch
-        {
-            ClipThemePreference.Dark => true,
-            ClipThemePreference.Light => false,
-            _ => MainWindow.IsWindowsDarkMode(),
-        };
-
-        var icon = new ThemeMorphIcon(_text, dark ? 1 : 0)
-        {
-            Width = 26,
-            Height = 26,
-        };
-
-        var button = new WpfButton
-        {
-            Width = 42,
-            Height = 30,
-            Padding = new Thickness(7, 1, 7, 1),
-            Background = WpfBrushes.Transparent,
-            BorderBrush = WpfBrushes.Transparent,
-            BorderThickness = new Thickness(1),
-            Content = icon,
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Template = SubtleSettingsButtonTemplate(),
-            FocusVisualStyle = null,
-            Tag = icon,
-        };
-        button.MouseEnter += (_, _) =>
-        {
-            button.BorderBrush = _line2;
-            button.Background = WpfBrushes.Transparent;
-            button.Opacity = 1;
-        };
-        button.MouseLeave += (_, _) =>
-        {
-            button.BorderBrush = WpfBrushes.Transparent;
-            button.Background = WpfBrushes.Transparent;
-            button.Opacity = 1;
-        };
-        button.PreviewMouseLeftButtonDown += (_, _) => button.Opacity = 0.72;
-        button.PreviewMouseLeftButtonUp += (_, _) => button.Opacity = 1;
-        button.Click += (_, _) =>
-        {
-            var next = MainWindow.NextThemeTogglePreference(PendingTheme ?? _settings.Theme, MainWindow.IsWindowsDarkMode());
-            AnimateAndApplyTheme(next, icon);
-        };
-        return button;
-    }
-
-    private ClipThemePreference? PendingTheme { get; set; }
-
-    private void ApplyThemeThroughToggle(ClipThemePreference theme, ThemeMorphIcon icon)
-    {
-        if (theme == _settings.Theme && PendingTheme is null)
-        {
-            return;
-        }
-
-        AnimateAndApplyTheme(theme, icon);
-    }
-
-    private void AnimateAndApplyTheme(ClipThemePreference theme, ThemeMorphIcon icon)
-    {
-        PendingTheme = theme;
-        _themeIcon = icon;
-        var dark = theme switch
-        {
-            ClipThemePreference.Dark => true,
-            ClipThemePreference.Light => false,
-            _ => MainWindow.IsWindowsDarkMode(),
-        };
-        icon.AnimateTo(
-            dark,
-            midway: () => { },
-            completed: () => { });
-
-        _themeApplyTimer.Stop();
-        _themeApplyTimer.Start();
-    }
-
-    private void ApplyPendingTheme()
-    {
-        _themeApplyTimer.Stop();
-        if (PendingTheme is not { } theme)
-        {
-            return;
-        }
-
-        ApplyThemeSelection(theme, refreshImmediately: false);
-        _paletteOverride = null;
-        // Rebuild the page instead of walking and repainting it: the blanket repaint erased
-        // state colors (selected app icon ring, toggle accent, dropdown values) and never
-        // reached popup subtrees. A rebuild reconstructs every row from the fresh palette.
-        RefreshTheme(rebuildPage: true);
-        _refreshClipboardManagerTextTheme();
-        _themeIcon?.SetInk(_text);
-        PendingTheme = null;
-        ShellLog.Info($"settings and main theme applied theme={theme}");
-    }
-
-    private sealed class ThemeMorphIcon : Grid
-    {
-        private SolidColorBrush _ink;
-        private readonly Grid _sun = new();
-        private readonly Grid _moon = new();
-        private readonly ScaleTransform _sunScale = new();
-        private readonly ScaleTransform _moonScale = new();
-        private readonly RotateTransform _sunRotate = new();
-        private readonly RotateTransform _moonRotate = new();
-
-        public ThemeMorphIcon(WpfBrush ink, double progress)
-        {
-            _ink = DetachedBrush(ink);
-            ClipToBounds = false;
-            SnapsToDevicePixels = true;
-            IsHitTestVisible = false;
-            BuildIcon(progress >= 0.5);
-        }
-
-        public void SetInk(WpfBrush ink)
-        {
-            _ink = DetachedBrush(ink);
-            ApplyInk(_sun);
-            ApplyInk(_moon);
-        }
-
-        public void AnimateTo(bool dark, Action midway, Action completed)
-        {
-            midway();
-            var duration = TimeSpan.FromMilliseconds(320);
-            Animate(_sun, OpacityProperty, dark ? 0 : 1, duration);
-            Animate(_moon, OpacityProperty, dark ? 1 : 0, duration, completed);
-            Animate(_sunScale, ScaleTransform.ScaleXProperty, dark ? 0.86 : 1, duration);
-            Animate(_sunScale, ScaleTransform.ScaleYProperty, dark ? 0.86 : 1, duration);
-            Animate(_moonScale, ScaleTransform.ScaleXProperty, dark ? 1 : 0.86, duration);
-            Animate(_moonScale, ScaleTransform.ScaleYProperty, dark ? 1 : 0.86, duration);
-            Animate(_sunRotate, RotateTransform.AngleProperty, dark ? 42 : 0, duration);
-            Animate(_moonRotate, RotateTransform.AngleProperty, dark ? 0 : -42, duration);
-        }
-
-        private void BuildIcon(bool dark)
-        {
-            Children.Clear();
-            BuildSun();
-            BuildMoon();
-            Children.Add(_sun);
-            Children.Add(_moon);
-            SetInitialState(dark);
-        }
-
-        private void BuildSun()
-        {
-            _sun.Width = 24;
-            _sun.Height = 24;
-            _sun.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
-            _sun.VerticalAlignment = VerticalAlignment.Center;
-            _sun.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-            _sun.RenderTransform = new TransformGroup { Children = { _sunScale, _sunRotate } };
-            _sun.Children.Add(new WpfEllipse
-            {
-                Width = 9.5,
-                Height = 9.5,
-                Fill = _ink,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            _sun.Children.Add(new WpfPath
-            {
-                Data = Geometry.Parse("M12,1 L12,3 M12,21 L12,23 M1,12 L3,12 M21,12 L23,12 M4.2,4.2 L5.7,5.7 M18.3,5.7 L19.8,4.2 M4.2,19.8 L5.7,18.3 M18.3,18.3 L19.8,19.8"),
-                Stroke = _ink,
-                StrokeThickness = 2,
-                StrokeStartLineCap = PenLineCap.Round,
-                StrokeEndLineCap = PenLineCap.Round,
-                Stretch = Stretch.None,
-            });
-        }
-
-        private void BuildMoon()
-        {
-            _moon.Width = 24;
-            _moon.Height = 24;
-            _moon.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
-            _moon.VerticalAlignment = VerticalAlignment.Center;
-            _moon.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-            _moon.RenderTransform = new TransformGroup { Children = { _moonScale, _moonRotate } };
-            _moon.Children.Add(new WpfPath
-            {
-                Data = Geometry.Parse("M21,12.8 A9,9 0 1 1 11.2,3 A7,7 0 1 0 21,12.8 Z"),
-                Fill = _ink,
-                Stretch = Stretch.None,
-            });
-        }
-
-        private void SetInitialState(bool dark)
-        {
-            _sun.Opacity = dark ? 0 : 1;
-            _moon.Opacity = dark ? 1 : 0;
-            _sunScale.ScaleX = _sunScale.ScaleY = dark ? 0.86 : 1;
-            _moonScale.ScaleX = _moonScale.ScaleY = dark ? 1 : 0.86;
-            _sunRotate.Angle = dark ? 42 : 0;
-            _moonRotate.Angle = dark ? 0 : -42;
-        }
-
-        private void ApplyInk(DependencyObject root)
-        {
-            for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-            {
-                var child = VisualTreeHelper.GetChild(root, i);
-                if (child is WpfShape shape)
-                {
-                    shape.Fill = shape.Fill is not null ? _ink : shape.Fill;
-                    shape.Stroke = shape.Stroke is not null ? _ink : shape.Stroke;
-                }
-
-                ApplyInk(child);
-            }
-        }
-
-        private static void Animate(DependencyObject target, DependencyProperty property, double to, TimeSpan duration, Action? completed = null)
-        {
-            var animation = new DoubleAnimation
-            {
-                To = to,
-                Duration = new Duration(duration),
-                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-                FillBehavior = FillBehavior.HoldEnd,
-            };
-            if (completed is not null)
-            {
-                animation.Completed += (_, _) => completed();
-            }
-
-            if (target is UIElement element)
-            {
-                element.BeginAnimation(property, animation, HandoffBehavior.SnapshotAndReplace);
-            }
-            else if (target is Animatable animatable)
-            {
-                animatable.BeginAnimation(property, animation, HandoffBehavior.SnapshotAndReplace);
-            }
-        }
-
-        private static SolidColorBrush DetachedBrush(WpfBrush brush)
-        {
-            if (brush is SolidColorBrush solid)
-            {
-                var detached = new SolidColorBrush(solid.Color);
-                detached.Freeze();
-                return detached;
-            }
-
-            var fallback = new SolidColorBrush(Colors.White);
-            fallback.Freeze();
-            return fallback;
-        }
-    }
-
-    private Border ThemeOptionRow(string item, Action<ClipThemePreference> onSelected)
-    {
-        var row = new Border
-        {
-            CornerRadius = new CornerRadius(5),
-            Padding = new Thickness(10, 7, 10, 7),
-            Background = WpfBrushes.Transparent,
-            BorderBrush = WpfBrushes.Transparent,
-            BorderThickness = new Thickness(1),
-        };
-        row.Child = new TextBlock
-        {
-            Text = item,
-            Foreground = string.Equals(item, _settings.Theme.ToString(), StringComparison.OrdinalIgnoreCase) ? _accent : _muted,
-            FontSize = 12,
-            FontWeight = FontWeights.Medium,
-        };
-        row.MouseEnter += (_, _) =>
-        {
-            row.Background = _accentSoft;
-            row.BorderBrush = _selectedBorder;
-        };
-        row.MouseLeave += (_, _) =>
-        {
-            row.Background = WpfBrushes.Transparent;
-            row.BorderBrush = WpfBrushes.Transparent;
-        };
-        row.MouseLeftButtonDown += (_, e) =>
-        {
-            if (Enum.TryParse<ClipThemePreference>(item, out var theme))
-            {
-                onSelected(theme);
-            }
-
-            e.Handled = true;
-        };
-        return row;
-    }
-
-    private void ApplyThemeSelection(ClipThemePreference theme, bool refreshImmediately = true)
-    {
-        if (theme == _settings.Theme)
-        {
-            return;
-        }
-
-        _applyTheme(theme);
-        if (refreshImmediately)
-        {
-            RefreshTheme(rebuildPage: false);
-        }
-
-        ShellLog.Info($"settings theme changed theme={theme}");
-    }
-
-    private FrameworkElement AppIconPicker()
-    {
-        // 32, not 30: each icon button is 24px image + 3px padding each side + 1px border each
-        // side = 32 exactly - a 30px host clipped the bottom edge.
-        var host = new Grid { Width = 74, Height = 32 };
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var light = AppIconButton(AppIconPreference.Light);
-        var dark = AppIconButton(AppIconPreference.Dark);
-        Grid.SetColumn(light, 0);
-        Grid.SetColumn(dark, 2);
-        host.Children.Add(light);
-        host.Children.Add(dark);
-        return host;
-    }
-
-    private WpfButton AppIconButton(AppIconPreference preference)
-    {
-        var active = preference == _settings.AppIcon;
-        var button = new WpfButton
-        {
-            Width = 32,
-            Height = 32,
-            Padding = new Thickness(3),
-            Background = WpfBrushes.Transparent,
-            BorderBrush = active ? _selectedBorder : WpfBrushes.Transparent,
-            // Thickness stays 1 either way: the hover handler swaps only the brush, and a 0px
-            // border made hover invisible on exactly the button the user is about to click.
-            BorderThickness = new Thickness(1),
-            Content = new WpfImage
-            {
-                Source = LoadAppIconImage(preference),
-                Width = 24,
-                Height = 24,
-                Stretch = Stretch.Uniform,
-                SnapsToDevicePixels = true,
-            },
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Template = SubtleSettingsButtonTemplate(),
-            FocusVisualStyle = null,
-            ToolTip = $"{preference} app icon",
-        };
-        RenderOptions.SetBitmapScalingMode(button, BitmapScalingMode.HighQuality);
-        button.MouseEnter += (_, _) => button.BorderBrush = _selectedBorder;
-        button.MouseLeave += (_, _) => button.BorderBrush = active ? _selectedBorder : WpfBrushes.Transparent;
-        button.Click += (_, _) =>
-        {
-            if (preference == _settings.AppIcon)
-            {
-                return;
-            }
-
-            _applyAppIcon(preference);
-            ShellLog.Info($"settings app icon changed icon={preference}");
-            ShowPage(_currentPage);
-        };
-        return button;
-    }
-
-    private static ImageSource LoadAppIconImage(AppIconPreference preference)
-    {
-        return MainWindow.RenderAppTileIcon(preference);
     }
 
     private WpfButton StyledDropdown(string selected, IReadOnlyList<string> items, Action<string> onSelected)

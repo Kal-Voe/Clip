@@ -86,16 +86,14 @@ public sealed class CoreSeamCoverageTests : IDisposable
         var root = Sub("settings");
         ClipStoragePaths.RootOverride.Value = root;
 
-        ClipSharedSettings.SetAppIcon(ClipSharedAppIcon.Dark);            // creates the file
-        ClipSharedSettings.SetCheckForUpdatesOnStartup(false);            // updates the existing file
+        ClipSharedSettings.SetCheckForUpdatesOnStartup(false);            // creates the file
         ClipSharedSettings.SetDefaultPasteFormat(PasteFormatPreference.OriginalFormatting);
-        ClipSharedSettings.SetHistoryLimit(42);
+        ClipSharedSettings.SetHistoryLimit(42);                           // updates the existing file
         ClipSharedSettings.SetMaxItemSizeBytes(1234);
         var clipsFolder = Path.Combine(root, "Clips");
         ClipSharedSettings.SetClipboardFolderPath(clipsFolder);
 
         var snapshot = ClipSharedSettings.Load();
-        Assert.Equal(ClipSharedAppIcon.Dark, snapshot.AppIcon);
         Assert.False(snapshot.CheckForUpdatesOnStartup);
         Assert.Equal(PasteFormatPreference.OriginalFormatting, snapshot.DefaultPasteFormat);
         Assert.Equal(42, snapshot.HistoryLimit);
@@ -119,7 +117,6 @@ public sealed class CoreSeamCoverageTests : IDisposable
 
         var snapshot = ClipSharedSettings.Load();
 
-        Assert.Equal(ClipSharedAppIcon.Light, snapshot.AppIcon);
         Assert.True(snapshot.CheckForUpdatesOnStartup);
         Assert.Equal(ClipSharedSettings.DefaultPasteFormat, snapshot.DefaultPasteFormat);
         Assert.Equal(ClipSharedSettings.DefaultHistoryLimit, snapshot.HistoryLimit);

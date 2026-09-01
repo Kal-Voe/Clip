@@ -158,13 +158,6 @@ public partial class App : System.Windows.Application
                 Icon = System.Drawing.SystemIcons.Application,
                 Visible = true,
             };
-            _window.AppIconChanged += preference =>
-            {
-                if (_tray is not null)
-                {
-                    _tray.Icon = LoadTrayIcon(preference);
-                }
-            };
             _window.UserNotificationRequested += message => _tray?.ShowBalloonTip(3000, "Clip", message, System.Windows.Forms.ToolTipIcon.Warning);
             _window.UpdateNotification += message => _tray?.ShowBalloonTip(3000, "Clip", message, System.Windows.Forms.ToolTipIcon.Info);
             _tray.DoubleClick += (_, _) => _window.ShowPalette();
@@ -206,7 +199,7 @@ public partial class App : System.Windows.Application
             {
                 if (_tray is not null && _window is not null)
                 {
-                    _tray.Icon = LoadTrayIcon(_window.AppIconPreference);
+                    _tray.Icon = LoadTrayIcon();
                 }
             }, System.Windows.Threading.DispatcherPriority.ContextIdle);
         }
@@ -260,11 +253,11 @@ public partial class App : System.Windows.Application
         }, token);
     }
 
-    private static System.Drawing.Icon LoadTrayIcon(AppIconPreference preference)
+    private static System.Drawing.Icon LoadTrayIcon()
     {
         try
         {
-            var path = global::Clip.Shell.MainWindow.AppIconPath(preference);
+            var path = global::Clip.Shell.MainWindow.AppIconPath();
             if (File.Exists(path))
             {
                 return new System.Drawing.Icon(path);

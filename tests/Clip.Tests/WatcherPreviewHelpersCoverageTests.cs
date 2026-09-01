@@ -84,10 +84,10 @@ public sealed class WatcherPreviewHelpersCoverageTests : IDisposable
     {
         var iconDir = Path.Combine(_root, "assets", "app-icons");
         Directory.CreateDirectory(iconDir);
-        var expected = Path.Combine(iconDir, "clip-tile-dark.ico");
+        var expected = Path.Combine(iconDir, "clip-tile-light.ico");
         File.WriteAllBytes(expected, [1, 2, 3]);
 
-        Assert.Equal(expected, WatcherTrayIcon.IconPath(WatcherAppIconPreference.Dark, _root));
+        Assert.Equal(expected, WatcherTrayIcon.IconPath(_root));
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public sealed class WatcherPreviewHelpersCoverageTests : IDisposable
         Directory.CreateDirectory(iconDir);
         File.Copy(RepoPath("assets", "app-icons", "clip-tile-light.ico"), Path.Combine(iconDir, "clip-tile-light.ico"));
 
-        using var icon = WatcherTrayIcon.LoadOwnedIcon(WatcherAppIconPreference.Light, _root);
+        using var icon = WatcherTrayIcon.LoadOwnedIcon(_root);
 
         Assert.NotNull(icon);
         Assert.True(icon!.Width > 0);
@@ -109,8 +109,8 @@ public sealed class WatcherPreviewHelpersCoverageTests : IDisposable
         var empty = Path.Combine(_root, "empty");
         Directory.CreateDirectory(empty);
 
-        Assert.Null(WatcherTrayIcon.LoadOwnedIcon(WatcherAppIconPreference.Light, empty));
-        Assert.Same(SystemIcons.Application, WatcherTrayIcon.LoadIcon(WatcherAppIconPreference.Light, empty));
+        Assert.Null(WatcherTrayIcon.LoadOwnedIcon(empty));
+        Assert.Same(SystemIcons.Application, WatcherTrayIcon.LoadIcon(empty));
     }
 
     [Fact]

@@ -88,14 +88,6 @@ public sealed class WatcherSettingsJsonCoverageTests
     }
 
     [Fact]
-    public void AppIconAcceptsStringsAndRejectsGarbage()
-    {
-        Assert.Equal(WatcherAppIconPreference.Dark, WatcherSettings.LoadFromJson("""{ "AppIcon": "dark" }""").AppIcon);
-        Assert.Equal(WatcherAppIconPreference.Light, WatcherSettings.LoadFromJson("""{ "AppIcon": "banana" }""").AppIcon);
-        Assert.Equal(WatcherAppIconPreference.Light, WatcherSettings.LoadFromJson("""{ "AppIcon": 0 }""").AppIcon);
-    }
-
-    [Fact]
     public void OpenHotkeyComesFromNestedHotkeysObject()
     {
         Assert.Equal("Ctrl+Space", WatcherSettings.LoadFromJson("""{ "Hotkeys": { "OpenClip": "Ctrl+Space" } }""").OpenHotkey);

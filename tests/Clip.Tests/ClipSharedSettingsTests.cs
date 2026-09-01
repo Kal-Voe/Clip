@@ -8,18 +8,20 @@ public sealed class ClipSharedSettingsTests
     [Fact]
     public void LoadFromJsonReadsSharedSettings()
     {
-        var settings = ClipSharedSettings.LoadFromJson("""{ "AppIcon": 1, "CheckForUpdatesOnStartup": false }""");
+        var settings = ClipSharedSettings.LoadFromJson("""{ "CheckForUpdatesOnStartup": false }""");
 
-        Assert.Equal(ClipSharedAppIcon.Dark, settings.AppIcon);
         Assert.False(settings.CheckForUpdatesOnStartup);
     }
 
+    // "AppIcon" is a retired key: the app icon is no longer a setting. A settings.json still
+    // carrying it must load exactly like one that never had it, rather than trip the parser.
     [Fact]
-    public void LoadFromJsonDefaultsPasteFormatToPlainTextWhenAbsent()
+    public void LoadFromJsonIgnoresTheRetiredAppIconKey()
     {
         var settings = ClipSharedSettings.LoadFromJson("""{ "AppIcon": 1 }""");
 
         Assert.Equal(PasteFormatPreference.PlainText, settings.DefaultPasteFormat);
+        Assert.True(settings.CheckForUpdatesOnStartup);
     }
 
     [Theory]

@@ -3,9 +3,9 @@ using Clip.Core;
 namespace Clip.Tests;
 
 // Coverage-focused tests for ClipSharedSettings: corrupt/empty JSON handling, the
-// string-based enum parsing branches, the boolean coercion branches, and the pure
-// Set*Json writers. The void Set* overloads and Update() write the user's real
-// %LocalAppData%\Clip\settings.json, so only the read-only Load path is exercised.
+// boolean coercion branches, and the pure Set*Json writers. The void Set* overloads
+// and Update() write the user's real %LocalAppData%\Clip\settings.json, so only the
+// read-only Load path is exercised.
 public sealed class ClipSharedSettingsCoverageTests
 {
     [Theory]
@@ -17,25 +17,11 @@ public sealed class ClipSharedSettingsCoverageTests
     {
         var settings = ClipSharedSettings.LoadFromJson(json);
 
-        Assert.Equal(ClipSharedAppIcon.Light, settings.AppIcon);
         Assert.True(settings.CheckForUpdatesOnStartup);
         Assert.Equal(ClipSharedSettings.DefaultPasteFormat, settings.DefaultPasteFormat);
         Assert.Equal(ClipSharedSettings.DefaultHistoryLimit, settings.HistoryLimit);
         Assert.Equal(ClipSharedSettings.DefaultMaxItemSizeBytes, settings.MaxItemSizeBytes);
         Assert.Null(settings.ClipboardFolderPath);
-    }
-
-    [Theory]
-    [InlineData("""{ "AppIcon": "Dark" }""", ClipSharedAppIcon.Dark)]
-    [InlineData("""{ "AppIcon": "dark" }""", ClipSharedAppIcon.Dark)]
-    [InlineData("""{ "AppIcon": "Light" }""", ClipSharedAppIcon.Light)]
-    [InlineData("""{ "AppIcon": "nonsense" }""", ClipSharedAppIcon.Light)]
-    [InlineData("""{ "AppIcon": 99 }""", ClipSharedAppIcon.Light)]
-    [InlineData("""{ "AppIcon": true }""", ClipSharedAppIcon.Light)]
-    [InlineData("""{ "AppIcon": null }""", ClipSharedAppIcon.Light)]
-    public void LoadFromJsonParsesAppIconFromStringNameWithFallback(string json, ClipSharedAppIcon expected)
-    {
-        Assert.Equal(expected, ClipSharedSettings.LoadFromJson(json).AppIcon);
     }
 
     [Theory]
@@ -47,24 +33,6 @@ public sealed class ClipSharedSettingsCoverageTests
     public void LoadFromJsonCoercesCheckForUpdatesBoolean(string json, bool expected)
     {
         Assert.Equal(expected, ClipSharedSettings.LoadFromJson(json).CheckForUpdatesOnStartup);
-    }
-
-    [Fact]
-    public void SetAppIconJsonRoundTripsAndPreservesOtherKeys()
-    {
-        var json = ClipSharedSettings.SetAppIconJson("""{ "HistoryLimit": 42 }""", ClipSharedAppIcon.Dark);
-
-        var settings = ClipSharedSettings.LoadFromJson(json);
-        Assert.Equal(ClipSharedAppIcon.Dark, settings.AppIcon);
-        Assert.Equal(42, settings.HistoryLimit);
-    }
-
-    [Fact]
-    public void SetAppIconJsonStartsFromEmptyDocumentWhenJsonIsCorrupt()
-    {
-        var json = ClipSharedSettings.SetAppIconJson("garbage!!", ClipSharedAppIcon.Light);
-
-        Assert.Equal(ClipSharedAppIcon.Light, ClipSharedSettings.LoadFromJson(json).AppIcon);
     }
 
     [Fact]
@@ -103,7 +71,6 @@ public sealed class ClipSharedSettingsCoverageTests
     {
         var settings = ClipSharedSettings.Load();
 
-        Assert.True(Enum.IsDefined(settings.AppIcon));
         Assert.True(Enum.IsDefined(settings.DefaultPasteFormat));
     }
 

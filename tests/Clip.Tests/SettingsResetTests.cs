@@ -10,8 +10,6 @@ public sealed class SettingsResetTests
     {
         var settings = new ClipShellSettings
         {
-            Theme = ClipThemePreference.Dark,
-            AppIcon = AppIconPreference.Dark,
             DefaultPasteFormat = PasteFormatPreference.OriginalFormatting,
             HistoryLimit = 100,
             MaxItemSizeBytes = 10 * 1024 * 1024,
@@ -29,8 +27,6 @@ public sealed class SettingsResetTests
 
         settings.ResetToDefaults();
 
-        Assert.Equal(ClipThemePreference.System, settings.Theme);
-        Assert.Equal(AppIconPreference.Light, settings.AppIcon);
         Assert.Equal(PasteFormatPreference.PlainText, settings.DefaultPasteFormat);
         Assert.Equal(500, settings.HistoryLimit);
         Assert.Equal(50L * 1024 * 1024, settings.MaxItemSizeBytes);

@@ -4,29 +4,18 @@ namespace Clip.Tests;
 
 public sealed class WatcherAppIconTests
 {
+    // "AppIcon" is a retired settings key — a file still carrying it must load like any other.
     [Fact]
-    public void WatcherSettingsReadsAppIconPreference()
+    public void WatcherSettingsIgnoresTheRetiredAppIconKey()
     {
         var settings = WatcherSettings.LoadFromJson("""{ "AppIcon": 1 }""");
 
-        Assert.Equal(WatcherAppIconPreference.Dark, settings.AppIcon);
+        Assert.Equal("Alt+V", settings.OpenHotkey);
     }
 
     [Fact]
-    public void WatcherSettingsDefaultsToLightAppIcon()
+    public void WatcherTrayIconAlwaysUsesTheLightTile()
     {
-        var settings = WatcherSettings.LoadFromJson("""{}""");
-
-        Assert.Equal(WatcherAppIconPreference.Light, settings.AppIcon);
-    }
-
-    [Fact]
-    public void WatcherTrayIconUsesConfiguredAppIconFile()
-    {
-        var darkPath = WatcherTrayIcon.IconPath(WatcherAppIconPreference.Dark, @"C:\Clip");
-        var lightPath = WatcherTrayIcon.IconPath(WatcherAppIconPreference.Light, @"C:\Clip");
-
-        Assert.EndsWith(@"assets\app-icons\clip-tile-dark.ico", darkPath);
-        Assert.EndsWith(@"assets\app-icons\clip-tile-light.ico", lightPath);
+        Assert.EndsWith(@"assets\app-icons\clip-tile-light.ico", WatcherTrayIcon.IconPath(@"C:\Clip"));
     }
 }

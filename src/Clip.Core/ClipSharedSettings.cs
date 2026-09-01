@@ -3,14 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace Clip.Core;
 
-public enum ClipSharedAppIcon
-{
-    Light = 0,
-    Dark = 1,
-}
-
 public readonly record struct ClipSharedSettingsSnapshot(
-    ClipSharedAppIcon AppIcon,
     bool CheckForUpdatesOnStartup,
     PasteFormatPreference DefaultPasteFormat,
     int? HistoryLimit,
@@ -52,7 +45,6 @@ public static class ClipSharedSettings
     {
         var root = ParseRootObject(json);
         return new ClipSharedSettingsSnapshot(
-            AppIcon: EnumValue(root, "AppIcon", ClipSharedAppIcon.Light),
             CheckForUpdatesOnStartup: BoolValue(root, "CheckForUpdatesOnStartup", true),
             DefaultPasteFormat: PasteFormatValue(root, "DefaultPasteFormat", DefaultPasteFormat),
             HistoryLimit: NullableIntValue(root, "HistoryLimit", DefaultHistoryLimit),
@@ -67,18 +59,6 @@ public static class ClipSharedSettings
     /// when the key is absent or invalid.
     /// </summary>
     public static PasteFormatPreference LoadDefaultPasteFormat() => Load().DefaultPasteFormat;
-
-    public static void SetAppIcon(ClipSharedAppIcon icon)
-    {
-        Update(json => SetAppIconJson(json, icon));
-    }
-
-    public static string SetAppIconJson(string json, ClipSharedAppIcon icon)
-    {
-        var root = ParseRootObject(json);
-        root["AppIcon"] = (int)icon;
-        return root.ToJsonString(JsonOptions);
-    }
 
     public static void SetCheckForUpdatesOnStartup(bool enabled)
     {
@@ -234,7 +214,6 @@ public static class ClipSharedSettings
 
     private static ClipSharedSettingsSnapshot DefaultSnapshot() =>
         new(
-            ClipSharedAppIcon.Light,
             true,
             DefaultPasteFormat,
             DefaultHistoryLimit,
@@ -257,25 +236,6 @@ public static class ClipSharedSettings
         {
             return new JsonObject();
         }
-    }
-
-    private static TEnum EnumValue<TEnum>(JsonObject root, string name, TEnum defaultValue)
-        where TEnum : struct, Enum
-    {
-        if (!root.TryGetPropertyValue(name, out var node) || node is null)
-        {
-            return defaultValue;
-        }
-
-        if (node.GetValueKind() == JsonValueKind.Number && node.GetValue<int>() is var numeric)
-        {
-            return Enum.IsDefined(typeof(TEnum), numeric) ? (TEnum)Enum.ToObject(typeof(TEnum), numeric) : defaultValue;
-        }
-
-        return node.GetValueKind() == JsonValueKind.String &&
-            Enum.TryParse<TEnum>(node.GetValue<string>(), ignoreCase: true, out var parsed)
-                ? parsed
-                : defaultValue;
     }
 
     private static bool BoolValue(JsonObject root, string name, bool defaultValue)
