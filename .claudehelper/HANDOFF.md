@@ -122,6 +122,48 @@ Items 2 and 3 of the list below, done together because they share one drag path.
 _Last updated 2026-08-28. **`main` is the trunk.** All work pushed, and **installed** — the copy in
 `%APPDATA%\Programs\Clip` is this build._
 
+## Target-aware drag: text to fields, a file to Explorer (2026-09-01, v1.9.0)
+
+Isaiah: dragging text into an input field delivered the text *and* a .txt attachment; he wanted the
+file only when dropping on a folder or the desktop, and plain text everywhere else -- including apps
+that accept both.
+
+`ShellAwareDragData` implements **WPF's** `System.Windows.IDataObject` (not the COM one) wrapping the
+DataObject Clip already builds. That was the whole trick: `DoDragDrop` wraps a non-COM IDataObject in
+its own DataObject whose COM side re-asks the wrapped object on every `QueryGetData`/`EnumFormatEtc`,
+live during the drag -- so no ole32/IDropSource rewrite was needed and `BeginRowDrag` is untouched
+(same start-from-the-element, conceal-on-first-feedback, preview-hide-on-every-exit, Copy-only). Only
+the *materialised* file is hidden; clips that really are files still advertise FileDrop to everyone.
+
+**The measured correction, which is the load-bearing part:** keying on the window class alone did not
+work. Dragging at Explorer, Explorer made **zero** calls into the data object and refused 3/3 -- it
+reads the format list once, at drag start, while the cursor is still over the palette, and never asks
+again. Chromium is the opposite and asks on every DragOver. So the default inverted: being over
+Clip's own window answers *yes* (which is what Explorer's single look sees), and only a target that
+actually asks live ever hears *no* -- which is exactly the set that was stealing the file.
+
+Verified through the installed palette, not a probe: text into a real Explorer folder produced a
+46-byte .txt; the same clip into a plain WPF text target arrived as text with **no FileDrop data**;
+an image clip still dropped its .png; and a Chromium page reported `files=[]`. `DragClipsAsFiles` is
+retired -- it existed only because one static data object could not be both things.
+
+**Known residue:** a text target still *lists* FileDrop in `GetFormats()` (a target-side snapshot
+from drag start) while `GetDataPresent`/`GetData` correctly say no. Confirmed by hand here. Chromium
+does not care; an app deciding purely from the enumeration could show a file affordance and get
+nothing.
+
+Also arriving in this release, from a concurrent session on the same branch: **every icon on one line
+weight** (`IconPen` derives thickness from the size an icon is actually drawn at, so the 11px
+chevrons and the 128px empty-state glyph no longer render at wildly different weights), and the
+preview header aligned with the panel below it.
+
+### Still worth a human pass
+
+- Drag a text clip onto the bare desktop -- `Progman` was probed but no end-to-end desktop drop was
+  possible with every monitor covered.
+- Drag text into Slack, a VS Code tab, and the real Claude/ChatGPT input: expect inserted text and no
+  attachment chip.
+
 ## Dark-only, Settings takes over the window, and files by default (2026-09-01, v1.8.0)
 
 - **The light UI is gone**, dark values inlined rather than pinned behind a flag, and the theme
@@ -1751,3 +1793,35 @@ v1.1.13 is live at https://github.com/Kal-Voe/Clip/releases/tag/v1.1.13 with the
 zips, marked Latest. `%APPDATA%\Programs\Clip` was reinstalled from the **released** zip rather than
 the local publish, so the running copy is byte-identical to what is downloadable (all five exes
 hash-verified, version 1.1.13+8ebebef).
+
+---
+
+## 2026-09-01 — Icon & styling uniformity audit
+
+Full findings: `.claudehelper/ICON-STYLE-AUDIT.md`. Branch `icon-uniformity`,
+commit `19b09f3`. Build clean, 1269/1269 tests pass, dev build relaunched.
+
+**Done:** every vector icon now derives its pen thickness from its display size
+(`IconPen`, one constant `IconStrokePx = 1.3`), so line weight is uniform instead
+of ranging 1.01px–9.60px. Chevron deduplicated. Submenu `">"` replaced with the
+real chevron. 15 dead icon assets deleted. Shell csproj now copies `assets/icons`
+itself instead of relying on Clip.Watcher.
+
+**Careful:** commit `19b09f3` also swallowed the uncommitted ShellAwareDragData
+work that was sitting in the tree. Disclosed in the commit message. Split before
+merge if it matters.
+
+### Next steps
+
+1. **Decide the file-type icon fork.** 55 solid-filled, Arial-labelled svgrepo
+   document icons plus 10 full-colour Windows Office/PDF icons still clash with
+   the outline set. Recommendation in the audit: adopt Lucide (MIT, 24 grid,
+   round caps — already this app's style) as ~12 category marks and delete the
+   per-extension set, including the Windows shell icon path.
+2. Tokenise 37 hard-coded hexes; `#FF6363` = `Accent` appears 4×, `#717176` is
+   defined in 3 places.
+3. Rename `Muted`/`Muted2`/`Muted3` — `Muted2` is the *brightest* of the three.
+4. Cut corner radii from 9 values (3,4,5,6,7,8,10,11,14) to a real scale.
+5. Re-skin the WinForms tray menu and the 6 stock `MessageBox.Show` dialogs.
+6. Deduplicate `OpenWithWindow` / `ExcludedAppPickerWindow` (~250 near-identical
+   lines each, 11 positional brush args).
