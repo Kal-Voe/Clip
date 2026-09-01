@@ -1080,6 +1080,9 @@ public partial class MainWindow : Window
     private Rect _expandedRestoreBounds;
     private CornerRadius _expandedRestoreCornerRadius;
     private bool _expandedWindowResized;
+
+    /// <summary>True between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE: the user is dragging the window.</summary>
+    private bool _inWindowMoveLoop;
     private Border? _inlineModalOverlay;
     private Border? _settingsOverlay;
     private SettingsWindow? _hostedSettings;
@@ -1235,10 +1238,25 @@ public partial class MainWindow : Window
             // cursor's monitor by then, so re-centring there changes no scale.
             DpiChanged += (_, _) =>
             {
-                if (IsVisible && !_isMediaFullScreen && !_expandedWindowResized)
+                if (!IsVisible || _isMediaFullScreen || _expandedWindowResized)
                 {
-                    PositionOnMouseScreen(log: false);
+                    return;
                 }
+
+                // Not while the user is dragging the window. Re-centring on the cursor's monitor
+                // mid-drag yanks the palette out from under the pointer at every DPI boundary it
+                // crosses, the drag loop then keeps moving it by the offset it started with, and
+                // the two fight: that is the jitter. The size still has to be corrected here
+                // rather than at drop, because WPF mishandles WM_DPICHANGED on a layered window
+                // and adopts the new physical size as DIPs (see PositionOnMouseScreen), so each
+                // crossing inflated the palette until the drag ended.
+                if (_inWindowMoveLoop)
+                {
+                    RestoreDesignSizeWhereItStands();
+                    return;
+                }
+
+                PositionOnMouseScreen(log: false);
             };
 
             _lastClipboardSequenceNumber = GetClipboardSequenceNumber();
@@ -2641,6 +2659,20 @@ public partial class MainWindow : Window
             }
 
             handled = true;
+        }
+        else if (msg == WmEnterSizeMove || msg == WmExitSizeMove)
+        {
+            // The bracket around the OS's modal move loop, which BeginWindowDrag hands the drag to.
+            // Not handled: DefWindowProc runs the loop, this only records that it is running so the
+            // DpiChanged handler knows the window belongs to the pointer right now.
+            _inWindowMoveLoop = msg == WmEnterSizeMove;
+            if (msg == WmExitSizeMove && !_isMediaFullScreen && !_expandedWindowResized)
+            {
+                // Belt and braces for the drop: if a DPI change during the drag left the size
+                // wrong — or arrived without WPF raising DpiChanged, which is what "sometimes it
+                // never resizes" looked like — this settles it. A no-op when it is already right.
+                RestoreDesignSizeWhereItStands();
+            }
         }
         else if (msg == WmHotkey && wParam.ToInt32() == OpenHotkeyId)
         {
@@ -9379,6 +9411,29 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Puts the palette back to its one design size without moving it — the drag's half of
+    /// <see cref="PositionOnMouseScreen"/>, which re-asserts the same size but then re-centres.
+    ///
+    /// The corner is read back and re-applied because setting Width/Height lays the new DIP size
+    /// out against a Left/Top that the rescale has just made stale, which would move the window a
+    /// second time; and the physical size is never passed to SetWindowPos, for the same reason
+    /// PositionOnMouseScreen passes NoSize: WPF would read it back as DIPs and shrink the palette.
+    /// Done inside the DPI change, so the frame Windows renders next is already the right size.
+    /// </summary>
+    private void RestoreDesignSizeWhereItStands()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect))
+        {
+            return;
+        }
+
+        Width = PaletteDesignWidth;
+        Height = PaletteDesignHeight;
+        SetWindowPos(hwnd, IntPtr.Zero, rect.Left, rect.Top, 0, 0, SetWindowPosNoSize | SetWindowPosNoZOrder | SetWindowPosNoActivate);
+    }
+
+    /// <summary>
     /// Where and how big the palette goes to sit centred on one monitor's work area, all in that
     /// monitor's physical pixels.
     ///
@@ -12549,6 +12604,8 @@ public partial class MainWindow : Window
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
     private const int WmNcLButtonDown = 0x00A1;
     private const int HtCaption = 2;
+    private const int WmEnterSizeMove = 0x0231;
+    private const int WmExitSizeMove = 0x0232;
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
 
     /// <summary>
