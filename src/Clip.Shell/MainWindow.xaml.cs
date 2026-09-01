@@ -5436,16 +5436,6 @@ public partial class MainWindow : Window
             PaintRowSelection(newRow, item.Id);
         }
 
-        // The header is one shared element, so a slow thumbnail must not paint over whatever
-        // item is selected by the time it arrives.
-        HeaderIcon.Source = IconFor(item, 96, onRicher: richer =>
-        {
-            if (_selected?.Id == item.Id)
-            {
-                HeaderIcon.Source = richer;
-            }
-        }, displaySize: 28);
-        AttachFavicon(HeaderIcon, item);
         TitleText.Text = TitleFor(item);
         SubTitleText.Text = HeaderSubtitleFor(item);
         if (item.Kind == ClipboardItemKind.Text)
@@ -5484,7 +5474,6 @@ public partial class MainWindow : Window
         _previewItemId = null;
         _previewSourceStamp = null;
         HidePreviews();
-        HeaderIcon.Source = null;
         TitleText.Text = "Clipboard";
         SubTitleText.Text = "Search, preview, and act on copied items";
         OpenButton.Visibility = Visibility.Collapsed;

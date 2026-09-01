@@ -463,19 +463,22 @@
                             <RowDefinition x:Name="PreviewHeaderSpacerDef" Height="14"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
+                        <!-- No icon column. The title used to sit behind a 28px icon and a 10px
+                             gap, which put it 38px right of INFORMATION directly below it and made
+                             the whole right-hand column look misaligned. The row in the list two
+                             inches away already shows that icon, and the preview shows the content
+                             itself, so the indent was buying a duplicate at the cost of the
+                             column's only vertical edge. -->
                         <Grid Grid.Row="0">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="28"/>
-                                <ColumnDefinition Width="10"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Image x:Name="HeaderIcon" Width="28" Height="28" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                 <TextBlock x:Name="TitleText" Text="Clipboard" Foreground="{DynamicResource Text}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                 <TextBlock x:Name="SubTitleText" Text="Search, preview, and act on copied items" Foreground="{DynamicResource Muted}" FontSize="11" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
-                            <Button x:Name="OpenButton" Grid.Column="3" Content="Open" Style="{StaticResource MiniButton}" Click="OnOpenClick" MinWidth="74" Margin="16,0,0,0"/>
+                            <Button x:Name="OpenButton" Grid.Column="1" Content="Open" Style="{StaticResource MiniButton}" Click="OnOpenClick" MinWidth="74" Margin="16,0,0,0"/>
                         </Grid>
 
                         <!-- The preview starts the same drag a row does, for whatever item is
