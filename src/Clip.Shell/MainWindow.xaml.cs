@@ -1325,8 +1325,21 @@ public partial class MainWindow : Window
             }
         };
 
-        Closing += (_, _) =>
+        Closing += (_, e) =>
         {
+            // A WM_CLOSE that isn't a real exit must only hide the palette. Alt+F4 on the open
+            // palette, a shell "close window", an installer's polite close — any of them used to
+            // destroy this window, and because the app is ShutdownMode.OnExplicitShutdown the
+            // process stayed alive in the tray with Alt+V unregistered and no way to get it back.
+            // The harnesses (PaletteSessionMode) are one-shot and still close on request.
+            if (!ShouldHonorCloseRequest(App.IsExiting, PaletteSessionMode))
+            {
+                e.Cancel = true;
+                ShellLog.Info("close request refused; concealing palette instead");
+                ConcealPalette("close-request");
+                return;
+            }
+
             _isClosing = true;
             var hwnd = new WindowInteropHelper(this).Handle;
             _hotkeyRetryTimer.Stop();
@@ -2033,6 +2046,15 @@ public partial class MainWindow : Window
     /// palette rather than the end of one: clearing the search and re-picking the top row would
     /// throw away the very list the next paste is being aimed at.
     /// </param>
+    /// <summary>
+    /// Pure part of the Closing guard: a close request is only honored when the app is genuinely
+    /// exiting, or when this is a one-shot harness window (PaletteSessionMode). Anything else —
+    /// Alt+F4, a shell "close window", an installer's polite WM_CLOSE — must leave the window alive
+    /// so the Alt+V registration survives.
+    /// </summary>
+    internal static bool ShouldHonorCloseRequest(bool appIsExiting, bool paletteSessionMode) =>
+        appIsExiting || paletteSessionMode;
+
     private void ConcealPalette(string reason, bool resetView = true)
     {
         StopOutsideClickWatch();
@@ -2134,7 +2156,7 @@ public partial class MainWindow : Window
         _paletteSessionExitRequested = true;
         _paletteSessionExitTimer.Stop();
         ShellLog.Info($"palette session exiting reason={reason}");
-        _ = Dispatcher.BeginInvoke(new Action(() => System.Windows.Application.Current.Shutdown()), System.Windows.Threading.DispatcherPriority.Background);
+        _ = Dispatcher.BeginInvoke(new Action(() => App.ExitApp()), System.Windows.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>
@@ -10020,7 +10042,7 @@ public partial class MainWindow : Window
             ShowToast("Update installer opened");
             if (shouldExit)
             {
-                System.Windows.Application.Current.Shutdown();
+                App.ExitApp();
             }
         }
         catch (Exception ex)

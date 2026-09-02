@@ -14,6 +14,20 @@ public partial class App : System.Windows.Application
     private CancellationTokenSource? _showPaletteSignalCts;
     private bool _ownsSingleInstanceMutex;
 
+    /// <summary>
+    /// True once a deliberate exit is under way. The palette refuses WM_CLOSE otherwise: this
+    /// process runs <see cref="ShutdownMode.OnExplicitShutdown"/>, so a destroyed window leaves
+    /// Clip alive in the tray with Alt+V unregistered and no way to get it back.
+    /// </summary>
+    public static bool IsExiting { get; private set; }
+
+    /// <summary>The only way out. Everything that means to quit goes through here.</summary>
+    public static void ExitApp(int exitCode = 0)
+    {
+        IsExiting = true;
+        Current?.Shutdown(exitCode);
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -103,6 +117,8 @@ public partial class App : System.Windows.Application
 
         StartShowPaletteSignalListener();
 
+        SessionEnding += (_, _) => IsExiting = true;
+
         DispatcherUnhandledException += (_, ex) =>
         {
             ShellLog.Error(ex.Exception, "dispatcher unhandled exception");
@@ -181,7 +197,7 @@ public partial class App : System.Windows.Application
             menu.Items.Add(_updateMenuItem);
             menu.Items.Add("Save log snapshot", null, (_, _) => _window.WriteDebugSnapshot("tray"));
             menu.Items.Add("Settings", null, (_, _) => _window.OpenSettingsFromTray());
-            menu.Items.Add("Exit", null, (_, _) => Shutdown());
+            menu.Items.Add("Exit", null, (_, _) => ExitApp());
             _tray.ContextMenuStrip = menu;
         }
 
