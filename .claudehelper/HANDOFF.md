@@ -1,7 +1,52 @@
 # Clip — handoff
 
-_Last updated 2026-09-01. **`main` is the trunk.** Committed, **not pushed and not installed** —
-everything below is only in `main`'s local history until you say otherwise._
+_Last updated 2026-09-02. **`main` is the trunk.** Pushed and **installed** (1.11.3 over
+`%APPDATA%\Programs\Clip`), running with `--debug-log` so the shell log keeps tracing._
+
+## Alt+V went dead because a WM_CLOSE destroyed the palette (2026-09-02, commit b42e50d)
+
+Reported as "Clip is in the tray but the hotkey doesn't open it." The shell log named it exactly:
+
+```
+17:12:29 deactivate ignored (palette stays until escape/outside-click/paste)
+17:12:32 open hotkey unregistered=True hwnd=46931068 win32=0
+17:12:32 debug log hotkey unregistered=True hwnd=46931068 win32=0
+17:12:32 window closing
+```
+
+...and then nothing. No exception, no new `window initialized`, and the process stayed up capturing
+clipboard for nobody. **The palette window IS the app**: it registers Alt+V on its own HWND and
+unregisters it in `Closing`, nothing cancelled that `Closing`, and the process is
+`ShutdownMode.OnExplicitShutdown` — so any WM_CLOSE that isn't a real exit (Alt+F4 on the open
+palette, a shell "close window", an installer's polite close, anything that enumerates windows and
+asks them to go away) permanently destroyed the only window that owns the hotkey. The tray icon
+outlives it, which is why it looks alive. **The 30-minute `--ensure-running` watchdog cannot see
+this state either** — the mutex is still held, so the watchdog exits quietly. That gap is still open.
+
+**Fix:** `Closing` now cancels and conceals unless the app is genuinely exiting. The pure decision is
+`MainWindow.ShouldHonorCloseRequest(appIsExiting, paletteSessionMode)` (tested, 3 cases). The flag is
+`App.IsExiting`, set by the single exit door `App.ExitApp()` — the three deliberate exits (tray Exit,
+palette-session idle timeout, update install) route through it, and `SessionEnding` sets it so a
+logoff isn't blocked. The harnesses (`PaletteSessionMode`) still close on request, so jank/open-test
+are untouched. 1284 tests green, zero warnings.
+
+**Verified on screen, not reasoned:** sent a real `WM_CLOSE` (0x0010) to the live palette HWND with
+`SendMessage`. Log answered `close request refused; concealing palette instead` →
+`palette concealed reason=close-request`, process alive, no unregister lines, Alt+V still on the same
+HWND. Before this commit that same message left the log at "window closing".
+
+**Still unknown: what sent the WM_CLOSE.** The palette had just been open (16:23) and lost activation
+3s before the close. `installer/Clip.iss` has `CloseApplications=force`, which is the same shape, but
+no install ran today (Clip.exe was dated 09-01 13:59). Worth watching the log for a repeat now that
+a refusal is logged instead of a silent death — the refusal line is the tripwire.
+
+**Note:** `Publish-Clip.ps1` skipped the installer (Inno Setup's ISCC.exe isn't on this machine) and
+the native launcher (ILCompiler refused cross-OS native compilation, fell back to ReadyToRun). The
+install was a file copy over `%APPDATA%\Programs\Clip`, which is the established route here.
+
+**Also noticed, not fixed:** the `Clip Autostart` scheduled task runs `Clip.exe` with **no
+arguments**, but `App.OnStartup` has a whole branch for `--ensure-running` describing it as a
+30-minute watchdog. Either the task lost its argument or that branch is dead code.
 
 ## Menu dismissal, drag jitter, and files-by-default (2026-09-01, commits f73d19a, d8e102d, 6a22231)
 
