@@ -1212,6 +1212,13 @@ public partial class MainWindow : Window
             // layered window (it returns success and changes nothing; verified on this machine).
             // DWM's clip is also antialiased, which a GDI region would not have been.
             ApplyRoundedWindowCorners(hwnd);
+            // Keep the palette out of Task View and Alt+Tab. ShowInTaskbar="False" only gives WPF's
+            // hidden owner window, which Alt+Tab honors but Task View does not: conceal cloaks the
+            // HWND rather than hiding it (cloaking reopens faster), and a cloaked window is still
+            // IsWindowVisible, so Task View listed Clip as an open window between opens.
+            // WS_EX_TOOLWINDOW is the one flag both lists honor unconditionally, and it costs a
+            // borderless topmost palette nothing — it has no caption or taskbar button to lose.
+            ApplyToolWindowStyle(hwnd);
             //
             // The constructor's theme pass ran before the hwnd existed, so it resolved to the
             // opaque palette; now that the window is real, re-theme so the acrylic blur
@@ -12689,6 +12696,23 @@ public partial class MainWindow : Window
             elementName.Contains("transparentTextEditing", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static void ApplyToolWindowStyle(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var style = GetWindowLongPtr(hwnd, WindowLongExStyle).ToInt64();
+        if ((style & WindowExToolWindow) != 0)
+        {
+            return;
+        }
+
+        SetWindowLongPtr(hwnd, WindowLongExStyle, new IntPtr(style | WindowExToolWindow));
+        ShellLog.Info("palette tool-window style applied");
+    }
+
     private void ApplyNoActivatePaletteStyle(bool enabled)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
@@ -12748,6 +12772,7 @@ public partial class MainWindow : Window
     private const int MouseActivateNoActivate = 3;
     private const int WindowLongExStyle = -20;
     private const long WindowExNoActivate = 0x08000000L;
+    private const long WindowExToolWindow = 0x00000080L;
     private const int ShowWindowShow = 5;
     private const int ShowWindowRestore = 9;
     private const uint SetWindowPosNoSize = 0x0001;

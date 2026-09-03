@@ -22,13 +22,21 @@ try {
         -Name $RunValueName -ErrorAction SilentlyContinue
 
     $workingDir = Split-Path -Parent $Exe
-    $action    = New-ScheduledTaskAction -Execute $Exe -WorkingDirectory $workingDir
+    # --ensure-running makes a duplicate launch exit quietly instead of popping the palette open
+    # on whoever is mid-keystroke, which is what lets the watchdog trigger below refire safely.
+    # This script had drifted from Install-ClipStartup.ps1 and registered neither the argument nor
+    # the watchdog, so every installer-made task was a plain logon launch with no recovery.
+    $action    = New-ScheduledTaskAction -Execute $Exe -Argument "--ensure-running" -WorkingDirectory $workingDir
     $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $trigger.Delay = "PT3S"
+    # Watchdog: something on this machine (EDR, most likely) can hard-kill Clip without any trace.
+    # Refiring every 30 minutes relaunches it; when it is already running the fire is a no-op.
+    $watchdog  = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
+        -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Days 3650)
     $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigger, $watchdog) `
         -Settings $settings -Principal $principal -Force | Out-Null
 
     Write-Output "Registered logon task '$TaskName' -> $Exe"
