@@ -1,7 +1,35 @@
 # Clip — handoff
 
-_Last updated 2026-09-02. **`main` is the trunk.** Pushed and **installed** (1.11.3 over
+_Last updated 2026-09-03. **`main` is the trunk.** Pushed and **installed** (1.11.3 over
 `%APPDATA%\Programs\Clip`), running with `--debug-log` so the shell log keeps tracing._
+
+## Task View showed the concealed palette, and the autostart task had no argument (2026-09-03, commit 6bc64b5)
+
+**Task View.** Isaiah saw Clip listed as an open window between opens (three-finger swipe up).
+Measured, not guessed: `EnumWindows` over the Clip pid showed the palette at
+`vis=True cloaked=1 tool=False owner=<hidden owner>`. `ShowInTaskbar="False"` in WPF buys only the
+hidden owner window — Alt+Tab honors that (an Alt+Tab-heuristic sweep of the whole desktop did NOT
+list Clip), but Task View uses a looser filter and shows cloaked-but-visible windows. And conceal
+deliberately **cloaks** rather than `Hide()`s, because a cloaked window reopens faster. So the HWND
+stayed `IsWindowVisible` forever. Fix: `WS_EX_TOOLWINDOW`, applied in `SourceInitialized` beside the
+corner rounding — the one flag both lists honor unconditionally, and a borderless topmost palette has
+no caption or taskbar button to lose. Verified live: `toolwindow=True` on the palette HWND.
+
+**The autostart task.** `installer/register-autostart.ps1` (what the Inno installer runs) had drifted
+from `Install-ClipStartup.ps1` (the manual script): the manual one registers `--ensure-running` plus a
+30-minute watchdog repetition trigger, the installer one registered **neither**. Every installer-made
+task was a plain logon launch with no recovery, which is why the `--ensure-running` branch in
+`App.OnStartup` looked like dead code. Both scripts now register the same task, and the live task was
+re-registered from the patched script. Verified: `Arguments: --ensure-running`, triggers
+`MSFT_TaskLogonTrigger` + `MSFT_TaskTimeTrigger repeat=PT30M`, and firing it against a running Clip
+logged `ensure-running: already running; duplicate exiting quietly` — same pid, no palette pop.
+
+**Idle cost, since it came up.** Clip has to be resident to capture the clipboard at all; hiding vs
+destroying the window changes nothing about that. Measured on this machine: the WebView2 preview
+children are torn down 3 minutes after conceal (`html preview released after idle`) and go to
+**0 MB**, exactly as designed. What is left is Clip's own **~295 MB working set / ~175 MB private**,
+which is high for an idle clipboard manager and is the only real footprint worth attacking. Not
+touched — nobody has asked for it yet.
 
 ## Alt+V went dead because a WM_CLOSE destroyed the palette (2026-09-02, commit b42e50d)
 
