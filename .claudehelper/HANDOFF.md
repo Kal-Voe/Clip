@@ -1,7 +1,83 @@
 # Clip — handoff
 
-_Last updated 2026-09-03. **`main` is the trunk.** Pushed and **installed** (1.11.3 over
-`%APPDATA%\Programs\Clip`), running with `--debug-log` so the shell log keeps tracing._
+_Last updated 2026-09-09. **`main` is the trunk.** Pushed (commit 3e2c0bf), **released** as
+**v1.11.3** (tag pushed, release workflow run), and **installed** as a coherent 1.11.3 set over
+`%APPDATA%\Programs\Clip`, running with `--debug-log` so the shell log keeps tracing._
+
+## Cross-DPI open size, clipboard read contention, and Google Earth paste (2026-09-09, commit 3e2c0bf, v1.11.3)
+
+Isaiah reported three things by voice: copy sometimes takes two tries and paste is inconsistent;
+paste should work everywhere and otherwise leave the text on the clipboard; and the palette
+sometimes opens small (window and panes) and not instantly. Root-caused all three from the source
+and the shell log, fixed, and verified live on the installed build.
+
+**Smaller window / smaller panes / not instant — the cross-DPI open race.** `PositionOnMouseScreen`
+places the window with `SetWindowPos(NoSize)` and depends on Windows raising `WM_DPICHANGED` to
+rescale it to the design size for the new monitor. On an open onto a different-scale monitor the
+reveal could win that race and present the window at the *previous* monitor's physical size — 800px
+on a 150% screen, which is the small window with small panes. The reveal (uncloak) is now gated on
+the HWND actually being `design*scale` for the monitor the cursor is on: `RevealWhenCorrectlySized`
+re-posts itself at Loaded priority (letting the pending `WM_DPICHANGED` and WPF's `DpiChanged`
+re-placement run) until `PaletteSizeMatchesDesignForCurrentMonitor` is true or ~10 cycles elapse. It
+**never forces a size** (an earlier attempt that passed the physical size to `SetWindowPos` +
+nudged the DIP Width/Height reproduced exactly the 533×347 shrink the original `NoSize` comment
+warns about — reverted). Same-DPI opens pass on attempt 0 with zero added delay
+(`palette revealed sizeWaitAttempts=0`). **Verified:** the log-oracle probe shows every reveal at
+the right size (1200×780 @150%, 800×520 @100%), and a screenshot on the 150% monitor shows the
+palette full-size with correctly-filled panes.
+
+**Copying takes two tries — clipboard read contention.** `ReadAndCaptureClipboard` read the live
+clipboard through six-plus separate `System.Windows.Clipboard.Contains*/Get*` calls, each opening
+and closing the clipboard again. While Clip held it open, the app the user was copying *from* got
+its `SetClipboardData` refused — the "two tries." Capture now reads every format off the single
+`GetDataObject()` snapshot already taken for the privacy check (`SnapshotHasFormat` / `SnapshotText`
+replace `ClipboardTextOrNull`): one clipboard touch instead of eight. The image branch is unchanged
+and only runs when an image is present. **Verified:** a unique text string and a file-drop list both
+captured through the snapshot path (log `clipboard captured kind=Text` / `kind=Files`).
+
+**Paste "anywhere" + the clipboard fallback.** The fallback Isaiah asked for **already exists** and
+was confirmed: `SetClipboard` puts the item on the clipboard *before* the synthetic Ctrl+V, so if
+focus is lost the text is already there to paste by hand. Classic Win32 fields, Chromium and Electron
+paste through the existing activate-and-restore path (a WinForms edit took a real 437-char paste; the
+path is unchanged by this work; Slack/VS Code/Claude were hand-verified in earlier sessions). The one
+brittle case was **Google Earth**: the no-activate decision required the focused Flutter element's
+name to match one of four exact strings, and Flutter varies that name across opens, so `noActivate`
+flipped True/False on the same page — the "inconsistent." Now, inside a Google Earth window an
+HWND-less editable whose name is a search field, empty, or the Flutter markup is the field; a named
+non-search input (a chat box) still takes the ordinary activating path, so a normal Chrome edit is
+unaffected. Three tests added. **Not hand-verified on real Google Earth** — Isaiah should confirm
+pasting an address into Google Earth's search is now consistent.
+
+**1287 tests green** (1284 + 3). Build clean, zero warnings.
+
+### The install got tangled mid-session — how it was untangled
+
+The startup update check kept finding "Update available" and popping a **downgrade** dialog, because a
+plain `dotnet build` stamps the shell `1.1.12` (the vestigial `<Version>` in `Clip.Shell.csproj`,
+which `Publish-Clip.ps1` normally overrides), which the updater reads as older than the `1.11.x`
+line. During testing a synthetic Enter hit that dialog's default **Yes**, and the interrupted 1.11.2
+installer downgraded `Clip.Core/Watcher/WindowsHistory.dll` to 1.11.2 while the shell stayed 1.11.3 —
+a version mismatch that crashed startup with
+`Could not load file or assembly 'Clip.Core, Version=1.11.3.0'`. Fixed by running `Publish-Clip.ps1
+-Version 1.11.3 -NoInstaller -NoZip -NoNativeLauncher` and robocopying the **whole coherent set** over
+the install. Now all four DLLs are 1.11.3, the app is stable (alive >60s), and the update check reads
+`Up to date current=1.11.3 latest=1.11.2` — no more dialog. **Lesson:** never deploy a single
+rebuilt DLL with an overridden version; the shell and `Clip.Core` must match, so always publish the
+full set (or don't override the version at all).
+
+### Next steps
+
+1. **Isaiah verifies Google Earth** — paste an address into its search field several times; it should
+   land every time now (was the flaky one). New log line to watch: `palette no-activate style
+   enabled=True` when it engages.
+2. **Candidate, not done — universal child-focus restore.** For a normal window Clip restores
+   foreground but *not* the specific focused child control (`ShouldSkipFocusedChildCapture` returns
+   true off the fast path), relying on the app to refocus its own control on activation. Most real
+   apps do; an app that does not would drop the paste. Capturing + restoring the focused child for
+   all apps (via the cheap `GetGUIThreadInfo` already used) could make paste land in the exact field
+   even there — but it touches the common path, so it needs its own careful verification. Left for
+   Isaiah to decide if he still sees a miss.
+3. The `--debug-log` shell is left running so the log keeps tracing.
 
 ## Task View showed the concealed palette, and the autostart task had no argument (2026-09-03, commit 6bc64b5)
 
