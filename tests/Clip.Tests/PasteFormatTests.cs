@@ -153,4 +153,44 @@ public sealed class PasteFormatTests
             "Search",
             "Google Search - Google Chrome"));
     }
+
+    // The flip fix: Flutter reports the focused canvas edit with a varying (often empty) name, which
+    // used to make noActivate toggle across opens on the same Google Earth page. An HWND-less
+    // editable in a Google Earth window is now the field regardless of that name.
+    [Fact]
+    public void GoogleEarthEmptyNamedFieldIsRecognizedFromWindowTitle()
+    {
+        Assert.True(MainWindow.IsGoogleEarthSearchElement(
+            "chrome",
+            System.Windows.Automation.ControlType.Edit,
+            0,
+            "",
+            "Google Earth - Google Chrome"));
+    }
+
+    // But a named, non-search input inside a Google Earth window (a chat box) still takes the
+    // ordinary activating path, so its focus is restored the normal way.
+    [Fact]
+    public void GoogleEarthNamedNonSearchInputIsNotRecognized()
+    {
+        Assert.False(MainWindow.IsGoogleEarthSearchElement(
+            "chrome",
+            System.Windows.Automation.ControlType.Edit,
+            0,
+            "Message",
+            "Google Earth - Google Chrome"));
+    }
+
+    // An empty-named HWND-less edit outside Google Earth must NOT flip to no-activate, or a normal
+    // web input would lose the working activate-and-restore path.
+    [Fact]
+    public void EmptyNamedEditOutsideGoogleEarthIsNotRecognized()
+    {
+        Assert.False(MainWindow.IsGoogleEarthSearchElement(
+            "chrome",
+            System.Windows.Automation.ControlType.Edit,
+            0,
+            "",
+            "Gmail - Google Chrome"));
+    }
 }

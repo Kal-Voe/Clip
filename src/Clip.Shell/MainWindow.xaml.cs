@@ -1587,16 +1587,7 @@ public partial class MainWindow : Window
             // done above, so the first frame the compositor presents is the finished one —
             // rows, chrome and position all current. Uncloaking synchronously here would show
             // the previous session's surface for one frame instead.
-            _ = Dispatcher.BeginInvoke(new Action(() =>
-            {
-                // A conceal can land between the show and this callback (fast escape);
-                // uncloaking then would leave the concealed window in the wrong state.
-                if (_paletteOpen && TryCloakPaletteWindow(false))
-                {
-                    _windowCloaked = false;
-                    ReassertBackdropAfterReveal();
-                }
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
+            RevealWhenCorrectlySized(attempt: 0);
         }
 
         BenchMarks.Mark("shown");
@@ -3011,9 +3002,23 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (System.Windows.Clipboard.ContainsFileDropList())
+            // Read every format off this ONE snapshot instead of calling the static
+            // System.Windows.Clipboard.Contains*/Get* helpers, which each open and close the
+            // clipboard again. A text copy used to take six-plus OpenClipboard round trips here,
+            // and while Clip holds the clipboard open the app the user is copying *from* gets its
+            // SetClipboardData refused — which is the "copying takes two tries" they reported. One
+            // GetDataObject snapshot (already taken above for the privacy check) answers all of the
+            // format questions without touching the clipboard again. The image branch still reads
+            // through ClipboardImageReader, but that only runs when an image is actually present.
+            if (dataObject is null)
             {
-                var files = System.Windows.Clipboard.GetFileDropList().Cast<string>().ToList();
+                return;
+            }
+
+            if (SnapshotHasFormat(dataObject, System.Windows.DataFormats.FileDrop) &&
+                dataObject.GetData(System.Windows.DataFormats.FileDrop) is string[] { Length: > 0 } fileArray)
+            {
+                var files = fileArray.ToList();
                 item = new ClipboardHistoryItem
                 {
                     Kind = ClipboardItemKind.Files,
@@ -3025,8 +3030,9 @@ public partial class MainWindow : Window
                     SourceAppUserModelId = source.Aumid,
                 };
             }
-            else if (System.Windows.Clipboard.ContainsImage() ||
-                     System.Windows.Clipboard.ContainsData("PNG"))
+            else if (SnapshotHasFormat(dataObject, System.Windows.DataFormats.Bitmap) ||
+                     SnapshotHasFormat(dataObject, System.Windows.DataFormats.Dib) ||
+                     SnapshotHasFormat(dataObject, "PNG"))
             {
                 var image = ClipboardImageReader.Read();
                 if (image is not null)
@@ -3035,12 +3041,12 @@ public partial class MainWindow : Window
                     return;
                 }
             }
-            else if (System.Windows.Clipboard.ContainsText())
+            else if ((SnapshotText(dataObject, System.Windows.DataFormats.UnicodeText) ??
+                      SnapshotText(dataObject, System.Windows.DataFormats.Text)) is { } text)
             {
-                var text = System.Windows.Clipboard.GetText();
                 var captureRichText = _settings.DefaultPasteFormat == PasteFormatPreference.OriginalFormatting;
-                var htmlText = captureRichText ? ClipboardTextOrNull(System.Windows.TextDataFormat.Html) : null;
-                var rtfText = captureRichText ? ClipboardTextOrNull(System.Windows.TextDataFormat.Rtf) : null;
+                var htmlText = captureRichText ? SnapshotText(dataObject, System.Windows.DataFormats.Html) : null;
+                var rtfText = captureRichText ? SnapshotText(dataObject, System.Windows.DataFormats.Rtf) : null;
                 if (TryNormalizeColorText(text, source.Name, out var colorHex))
                 {
                     item = new ClipboardHistoryItem
@@ -9117,11 +9123,39 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string? ClipboardTextOrNull(System.Windows.TextDataFormat format)
+    /// <summary>
+    /// Whether a format is on a clipboard snapshot, without reopening the clipboard. Guarded
+    /// because <see cref="System.Windows.IDataObject.GetDataPresent(string)"/> can throw on a
+    /// malformed data object, and "not present" is the safe answer.
+    /// </summary>
+    private static bool SnapshotHasFormat(System.Windows.IDataObject data, string format)
     {
         try
         {
-            return System.Windows.Clipboard.ContainsText(format) ? System.Windows.Clipboard.GetText(format) : null;
+            return data.GetDataPresent(format);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads one text format off a clipboard snapshot, without reopening the clipboard — the
+    /// replacement for the old ClipboardTextOrNull, which went back to the live clipboard for
+    /// every format and every read (see the contention note in ReadAndCaptureClipboard). Returns
+    /// null when the format is absent or empty.
+    /// </summary>
+    private static string? SnapshotText(System.Windows.IDataObject data, string format)
+    {
+        try
+        {
+            if (!data.GetDataPresent(format))
+            {
+                return null;
+            }
+
+            return data.GetData(format) as string is { Length: > 0 } text ? text : null;
         }
         catch
         {
@@ -9420,12 +9454,81 @@ public partial class MainWindow : Window
         // physical size back into Width/Height as DIPs, so on a 150% monitor an 800-DIP palette set
         // to 800 physical becomes 533 DIPs, and every open shrinks it again. The size is only ever
         // computed to place the window; Windows applies the real one when it rescales for the
-        // target monitor.
+        // target monitor. RevealWhenCorrectlySized (which gates the reveal in ShowPalette) is
+        // what keeps the window cloaked until that rescale has actually landed, so the first frame
+        // the user sees is never the pre-rescale small one.
         SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, SetWindowPosNoSize | SetWindowPosNoZOrder | SetWindowPosNoActivate);
         if (log)
         {
             ShellLog.Info($"position(win32) cursor={cursor.X},{cursor.Y} work={work.Left},{work.Top} {workWidth}x{workHeight} scale={scale:0.##} win={windowWidth}x{windowHeight} -> {x},{y}");
         }
+    }
+
+    /// <summary>
+    /// Uncloaks the palette once it is the correct size for the monitor it landed on, or after a
+    /// short budget of dispatcher cycles. Each attempt yields at Loaded priority, which lets the
+    /// pending WM_DPICHANGED and WPF's DpiChanged re-placement run between checks — so a cross-DPI
+    /// open reveals at the right size on the first visible frame instead of flashing the small
+    /// pre-rescale one. The budget (~10 cycles) guarantees the palette always appears even if the
+    /// size never converges; a same-DPI open passes the check on the first attempt and reveals with
+    /// no delay, exactly as before.
+    /// </summary>
+    private void RevealWhenCorrectlySized(int attempt)
+    {
+        _ = Dispatcher.BeginInvoke(new Action(() =>
+        {
+            // A conceal can land between the show and this callback (fast escape); uncloaking then
+            // would leave the concealed window in the wrong state.
+            if (!_paletteOpen || !_windowCloaked)
+            {
+                return;
+            }
+
+            if (attempt < 10 && !PaletteSizeMatchesDesignForCurrentMonitor())
+            {
+                RevealWhenCorrectlySized(attempt + 1);
+                return;
+            }
+
+            if (TryCloakPaletteWindow(false))
+            {
+                _windowCloaked = false;
+                ReassertBackdropAfterReveal();
+                ShellLog.Info($"palette revealed sizeWaitAttempts={attempt}");
+            }
+        }), System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    /// <summary>
+    /// Whether the palette's HWND is already the design size for the monitor the cursor is on.
+    /// After <see cref="PositionOnMouseScreen"/> moves the window across a DPI boundary, Windows
+    /// rescales it asynchronously (WM_DPICHANGED) and WPF's DpiChanged handler re-runs the placement
+    /// to land the correct 800x520-DIP size; until that round trip completes the HWND is still the
+    /// previous monitor's physical size — 800px on a 150% screen, the "smaller window, smaller
+    /// panes" the user sees if the reveal wins the race. The reveal is gated on this so it waits for
+    /// the correct size instead of flashing the small one. Always true when there is nothing to
+    /// wait for (single-DPI setups, or media/expanded modes that own the size).
+    /// </summary>
+    private bool PaletteSizeMatchesDesignForCurrentMonitor()
+    {
+        if (_isMediaFullScreen || _expandedWindowResized)
+        {
+            return true;
+        }
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero || !GetCursorPos(out var cursor) || !GetWindowRect(hwnd, out var rect))
+        {
+            return true;
+        }
+
+        var scale = MonitorScale(MonitorFromPoint(cursor, MonitorDefaultToNearest));
+        var wantWidth = (int)Math.Round(PaletteDesignWidth * scale);
+        var wantHeight = (int)Math.Round(PaletteDesignHeight * scale);
+        // Within a couple of pixels is "correct" — rounding at odd scales (125%, 175%) never lands
+        // dead on.
+        return Math.Abs((rect.Right - rect.Left) - wantWidth) <= 2 &&
+            Math.Abs((rect.Bottom - rect.Top) - wantHeight) <= 2;
     }
 
     /// <summary>
@@ -12678,22 +12781,46 @@ public partial class MainWindow : Window
             return false;
         }
 
+        // A Flutter/canvas field lives inside the page, not in a real child window, so it has no
+        // native HWND. That is the signal that the field dies on blur and the palette must not
+        // steal focus. Requiring it also keeps a normal Chrome address bar (which is a real HWND
+        // child) on the ordinary activating path.
         if (nativeWindowHandle != 0)
         {
             return false;
         }
 
-        if (controlType != ControlType.Edit && controlType != ControlType.Group)
+        if (controlType != ControlType.Edit &&
+            controlType != ControlType.Group &&
+            controlType != ControlType.Document)
         {
             return false;
         }
 
-        var elementName = name ?? string.Empty;
-        return elementName.Contains("Search Google Earth", StringComparison.OrdinalIgnoreCase) ||
-            (string.Equals(elementName, "Search", StringComparison.OrdinalIgnoreCase) &&
-                (windowTitle ?? string.Empty).Contains("Google Earth", StringComparison.OrdinalIgnoreCase)) ||
+        // The old code required the element name to be one of four exact strings, and Flutter hands
+        // back a different name depending on which internal node has focus — sometimes the search
+        // markup, sometimes just "Search", sometimes nothing at all — which is why `noActivate`
+        // flipped True/False across consecutive opens on the same page ("pasting is not
+        // consistent"). Loosen it: inside a Google Earth window, an HWND-less editable whose name
+        // is a search field, empty (Flutter's canvas edit often reports no name), or the Flutter
+        // markup is the field. A named, non-search input (a chat box's "Message") is still excluded,
+        // so a normal Chrome edit keeps the ordinary activating path.
+        var elementName = (name ?? string.Empty).Trim();
+        var inGoogleEarth = (windowTitle ?? string.Empty).Contains("Google Earth", StringComparison.OrdinalIgnoreCase);
+
+        var looksLikeSearchField =
+            elementName.Contains("Search Google Earth", StringComparison.OrdinalIgnoreCase) ||
             elementName.Contains("flt-text-editing", StringComparison.OrdinalIgnoreCase) ||
             elementName.Contains("transparentTextEditing", StringComparison.OrdinalIgnoreCase);
+
+        if (inGoogleEarth)
+        {
+            return looksLikeSearchField ||
+                elementName.Length == 0 ||
+                elementName.Contains("Search", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return looksLikeSearchField;
     }
 
     private static void ApplyToolWindowStyle(IntPtr hwnd)
