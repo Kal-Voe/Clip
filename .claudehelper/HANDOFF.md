@@ -1,8 +1,44 @@
 # Clip — handoff
 
-_Last updated 2026-09-09. **`main` is the trunk.** Pushed (commit 3e2c0bf), **released** as
-**v1.11.3** (tag pushed, release workflow run), and **installed** as a coherent 1.11.3 set over
-`%APPDATA%\Programs\Clip`, running with `--debug-log` so the shell log keeps tracing._
+_Last updated 2026-09-09 (later). **`main` is the trunk.** Pushed (commit 92f5ba5), **released** as
+**v1.11.4**, and **installed** as a coherent 1.11.4 set over `%APPDATA%\Programs\Clip`, running with
+`--debug-log`._
+
+## Paste into the Claude desktop app takes two tries (2026-09-09, commit 92f5ba5, v1.11.4)
+
+Isaiah, after v1.11.3: "paste still not working on the first try." The target (log hwnd 270406056)
+is the **Claude desktop app** — Electron. Reproduced inside that app with a real-clicked field: Clip
+activated the window, sent Ctrl+V, logged `verified=True`, and the field got **no keydown and no
+paste**; afterwards UIA showed focus on the app's main "Claude" document, not the field. Electron
+re-focuses its main view when the window is re-activated, and a Ctrl+V sent in that gap reaches
+nothing. Plain Edge (`--app` window, one page) took 3/3 on the same build — it is Electron's focus
+routing, not Chromium key timing.
+
+Things that did **not** put focus back (measured): UIA `SetFocus()` on the field; `SetFocus` on the
+`Chrome_RenderWidgetHostHWND` child under the field (UIA then *reported* the field focused, but a
+scan-coded Ctrl+V still did not land). A no-activate palette would avoid the problem outright but
+needs a keyboard hook to keep Enter/search working — not done.
+
+**Fix shipped:** Chromium hosts (`Chrome_WidgetWin_*` — Chrome, Edge, every Electron app) now
+capture the UI Automation element at open, which puts them on the existing **verify-and-retry**
+path: read the field after Ctrl+V, send it again if nothing arrived — the "second try", done by
+Clip. Plus `WaitForTargetThreadFocus` (GetGUIThreadInfo: thread has active+focus window) and an
+80ms settle for Chromium after activation. Log now says `class=`, `element=Edit:'…'`,
+`focusReadyMs`, `settleMs`, and `paste verify succeeded/retrying/failed`. `SafeLogValue` trims to
+120 chars. **Verified:** 5/5 into Edge with `paste verify succeeded attempt=1`. 1293 tests.
+
+**Not verified in the Claude app itself** — its chat box cannot be driven safely from a script (the
+in-app browser pane is not a valid stand-in: `document.hasFocus()` is false there even when the OS
+says it is focused). Isaiah should watch the log on his next miss: if it says `paste verify
+retrying` then `succeeded attempt=2`, the retry is doing its job; if `paste verify unavailable`,
+the chat box exposes no readable value and the next lever is the no-activate palette + keyboard hook.
+
+**Mishap to own:** an early harness launched Cursor, which took too long to open, so five Clip pastes
+("River Edge Commercial Office") landed in Isaiah's Claude chat input instead. Every later harness
+guards each keystroke on the foreground pid.
+
+**Size:** the reveal gate never actually waits in practice (`sizeWaitAttempts=0` on every open in
+the log); it is a guarantee, not a delay.
 
 ## Cross-DPI open size, clipboard read contention, and Google Earth paste (2026-09-09, commit 3e2c0bf, v1.11.3)
 
