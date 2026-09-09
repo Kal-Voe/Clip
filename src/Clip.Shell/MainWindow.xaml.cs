@@ -6485,16 +6485,47 @@ public partial class MainWindow : Window
         var windowTitle = WindowTitle(foreground);
         var windowClass = WindowClass(foreground);
         _returnFocusCouldNeedNoActivate = CouldNeedNoActivatePalette(foreground, windowTitle);
-        var needsAutomation = IsFileExplorerWindowClass(windowClass) || _returnFocusCouldNeedNoActivate;
+        // Chromium hosts (Chrome, Edge, every Electron app — the Claude desktop app included) get
+        // the UI Automation element too. That is what lets VerifyPasteOrRetry read the field after
+        // the Ctrl+V and send it again when nothing arrived: measured against the Claude app, the
+        // first Ctrl+V after Clip hands focus back is sometimes dropped while the app is still
+        // moving focus between its internal views — the paste that "takes two tries". The retry is
+        // the second try, done by Clip. Where the field exposes no readable value the check is
+        // simply unavailable, exactly as before.
+        var needsAutomation = IsFileExplorerWindowClass(windowClass) ||
+            _returnFocusCouldNeedNoActivate ||
+            IsChromiumWindowClass(windowClass);
         var processName = needsAutomation ? TryGetProcessNameForWindow(foreground) : null;
         _returnFocusChildHwnd = ShouldSkipFocusedChildCapture(needsAutomation)
             ? IntPtr.Zero
             : FocusedChildWindow(foreground);
         _returnFocusElement = needsAutomation ? FocusedAutomationElement() : null;
-        _returnFocusElementSummary = _returnFocusElement is null ? "none" : "captured";
+        _returnFocusElementSummary = DescribeAutomationElement(_returnFocusElement);
         _returnFocusValueBefore = null;
         _returnFocusCommitsPasteWithEnter = _returnFocusCouldNeedNoActivate && ShouldCommitPasteWithEnter(_returnFocusHwnd, _returnFocusElement);
-        ShellLog.Info($"return focus captured hwnd={_returnFocusHwnd} child={_returnFocusChildHwnd} process={processName ?? "unknown"} element={_returnFocusElementSummary} elapsedMs={watch.ElapsedMilliseconds}");
+        ShellLog.Info($"return focus captured hwnd={_returnFocusHwnd} child={_returnFocusChildHwnd} process={processName ?? "unknown"} class={windowClass} element={_returnFocusElementSummary} elapsedMs={watch.ElapsedMilliseconds}");
+    }
+
+    internal static bool IsChromiumWindowClass(string? windowClass) =>
+        windowClass is not null && windowClass.StartsWith("Chrome_WidgetWin", StringComparison.Ordinal);
+
+    /// <summary>"none", or the focused element's control type and name, so the log says what field a paste was aimed at.</summary>
+    private static string DescribeAutomationElement(AutomationElement? element)
+    {
+        if (element is null)
+        {
+            return "none";
+        }
+
+        try
+        {
+            var current = element.Current;
+            return $"{current.ControlType.ProgrammaticName.Replace("ControlType.", string.Empty)}:'{SafeLogValue(current.Name)}'";
+        }
+        catch
+        {
+            return "captured";
+        }
     }
 
     private static bool ShouldSkipFocusedChildCapture(bool needsAutomation)
@@ -6531,8 +6562,62 @@ public partial class MainWindow : Window
         }
 
         var automationFocusSet = SetAutomationFocus(_returnFocusElement);
-        ShellLog.Info($"return focus restored hwnd={_returnFocusHwnd} child={_returnFocusChildHwnd} foreground={foregroundSet} focus={focusSet} elementFocus={automationFocusSet} element={_returnFocusElementSummary}");
+
+        // Foreground is not focus. GetForegroundWindow flips the moment the switch is queued, but
+        // the target's own thread still has to process WM_ACTIVATE/WM_SETFOCUS before it has a
+        // focus window, and a key that arrives before then is dropped — which is the paste that
+        // "takes two tries". Wait for the target thread to report that it has focus, then give a
+        // Chromium host (Electron apps, browsers) a short beat on top: it hands focus to its page
+        // over an internal message after the window itself is focused, and Ctrl+V sent inside that
+        // gap reaches nothing. Measured against the Claude desktop app: Ctrl+V sent immediately
+        // after activation produced no keydown and no paste in the focused field.
+        var targetClass = WindowClass(_returnFocusHwnd);
+        var focusReadyMs = WaitForTargetThreadFocus(_returnFocusHwnd);
+        var settleMs = SettleAfterActivationMs(targetClass);
+        if (settleMs > 0)
+        {
+            Thread.Sleep(settleMs);
+        }
+
+        ShellLog.Info($"return focus restored hwnd={_returnFocusHwnd} child={_returnFocusChildHwnd} foreground={foregroundSet} focus={focusSet} elementFocus={automationFocusSet} element={_returnFocusElementSummary} class={targetClass} focusReadyMs={focusReadyMs} settleMs={settleMs}");
     }
+
+    /// <summary>
+    /// Polls until the target's thread reports an active window and a focus window, i.e. it has
+    /// processed its activation and can take keyboard input. Returns the milliseconds waited, or
+    /// -1 if the budget ran out (the paste still goes ahead; some hosts — UWP frames — never report
+    /// a focus window through GetGUIThreadInfo, and blocking them forever would be worse).
+    /// </summary>
+    private static int WaitForTargetThreadFocus(IntPtr hwnd)
+    {
+        var thread = GetWindowThreadProcessId(hwnd, out _);
+        if (thread == 0)
+        {
+            return -1;
+        }
+
+        var watch = Stopwatch.StartNew();
+        while (watch.ElapsedMilliseconds < 250)
+        {
+            var info = new GuiThreadInfo { CbSize = Marshal.SizeOf<GuiThreadInfo>() };
+            if (GetGUIThreadInfo(thread, ref info) && info.HwndActive != IntPtr.Zero && info.HwndFocus != IntPtr.Zero)
+            {
+                return (int)watch.ElapsedMilliseconds;
+            }
+
+            Thread.Sleep(5);
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Extra settle after the target thread has focus, by host kind. Chromium ("Chrome_WidgetWin_*":
+    /// Chrome, Edge, every Electron app) needs one because page focus follows window focus over an
+    /// internal message; everything else takes the key as soon as its thread has focus.
+    /// </summary>
+    internal static int SettleAfterActivationMs(string? windowClass) =>
+        windowClass is not null && windowClass.StartsWith("Chrome_WidgetWin", StringComparison.Ordinal) ? 80 : 0;
 
     private bool TryPasteDirectlyIntoExplorerSearch(ClipboardHistoryItem item, string? text)
     {
@@ -12868,7 +12953,11 @@ public partial class MainWindow : Window
             return "-";
         }
 
-        return value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        var flat = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        // Field values now reach the log for every browser and Electron paste (verify-and-retry
+        // reads them). A preview is all the diagnosis needs; the whole field is not, and a chat box
+        // or a document can be thousands of characters.
+        return flat.Length <= 120 ? flat : flat[..120] + "…";
     }
 
     [StructLayout(LayoutKind.Sequential)]
